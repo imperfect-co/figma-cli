@@ -9,7 +9,9 @@ from figma_cli import __version__
 def build_parser() -> argparse.ArgumentParser:
     # prog is left unset so it follows sys.argv[0]: each alias reports its own name.
     parser = argparse.ArgumentParser(
-        description="Headless Figma CLI for AI coding agents and automated design inspection.",
+        description=(
+            "Headless Figma CLI for AI coding agents and automated design inspection."
+        ),
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
