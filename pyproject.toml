@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "figma-cli"
+dynamic = ["version"]
+description = "Headless Figma CLI for AI coding agents and automated design inspection."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "imperfect-co" }]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "build", "twine>=6.1.0"]
+
+[project.scripts]
+figma-cli = "figma_cli.cli:main"
+figma = "figma_cli.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/imperfect-co/figma-cli"
+Issues = "https://github.com/imperfect-co/figma-cli/issues"
+
+[tool.hatch.version]
+path = "src/figma_cli/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/figma_cli"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
