@@ -65,7 +65,9 @@ def _export(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
     files = []
     for node_id in node_ids:
         payload = download(images[node_id])
-        path = out_dir / f"{_safe_name(node_id)}.{args.format}"
+        path = (
+            out_dir / f"{_safe_name(args.file_key)}_{_safe_name(node_id)}.{args.format}"
+        )
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)

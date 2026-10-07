@@ -64,12 +64,12 @@ figma file get AbCdEf123 --depth 1
 figma file get AbCdEf123 --depth 2 --json | jq '.document.children[].name'
 ```
 
-Render two frames to PNG and print where they were written:
+Render two frames to PNG and print where they were written. Files are named `<file_key>_<node_id>.<format>` with `:` and other unsafe characters replaced by `-`; re-exporting the same node overwrites its file:
 
 ```console
 $ figma export AbCdEf123 --nodes 1:2,1:3 --output shots
-shots/1-2.png
-shots/1-3.png
+shots/AbCdEf123_1-2.png
+shots/AbCdEf123_1-3.png
 ```
 
 Post a comment pinned to a frame, reply to it, list the thread, then clean up:

@@ -233,7 +233,7 @@ def test_export_downloads_asset_without_token(monkeypatch, tmp_path, capsys):
 
         assert code == 0
         out = json.loads(capsys.readouterr().out)
-        path = tmp_path / "1-2.png"
+        path = tmp_path / "KEY_1-2.png"
         assert out == {"files": [{"node_id": "1:2", "path": str(path), "bytes": 24}]}
         assert path.read_bytes().startswith(b"\x89PNG")
         assert "ids=1%3A2" in api_rec.requests[0][1]
