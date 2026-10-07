@@ -26,15 +26,11 @@ def _resolve(target: str):
     return getattr(import_module(module), attr)
 
 
-def test_version_is_0_1_0():
-    assert __version__ == "0.1.0"
-
-
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["--version"])
     assert exc.value.code == 0
-    assert "0.1.0" in capsys.readouterr().out
+    assert __version__ in capsys.readouterr().out
 
 
 def test_help_flag(capsys):
@@ -83,4 +79,4 @@ def test_module_execution(flag):
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert ("0.1.0" if flag == "--version" else "usage:") in result.stdout
+    assert (__version__ if flag == "--version" else "usage:") in result.stdout
