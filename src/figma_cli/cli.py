@@ -50,7 +50,7 @@ def _safe_name(node_id: str) -> str:
 
 
 def _export(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
-    node_ids = [n.strip() for n in args.nodes.split(",") if n.strip()]
+    node_ids = args.nodes
     images = client.get_images(args.file_key, node_ids, args.format)
     missing = [n for n in node_ids if not images.get(n)]
     if missing:
@@ -110,6 +110,13 @@ def _positive_int(value: str) -> int:
     return number
 
 
+def _node_list(value: str) -> list[str]:
+    nodes = [n.strip() for n in value.split(",") if n.strip()]
+    if not nodes:
+        raise argparse.ArgumentTypeError("expected one or more node ids")
+    return nodes
+
+
 def build_parser() -> argparse.ArgumentParser:
     # prog is left unset so it follows sys.argv[0]: each alias reports its own name.
     parser = argparse.ArgumentParser(
@@ -139,7 +146,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = commands.add_parser("export", parents=[common], help="render nodes to files")
     p.add_argument("file_key")
-    p.add_argument("--nodes", required=True, help="comma-separated node ids")
+    p.add_argument(
+        "--nodes", required=True, type=_node_list, help="comma-separated node ids"
+    )
     p.add_argument("--format", choices=("png", "svg"), default="png")
     p.add_argument("--output", default=".", help="destination directory")
     p.set_defaults(handler=_export)

@@ -201,6 +201,7 @@ def test_comment_delete(stub, capsys):
         ["file", "get"],
         ["export", "KEY"],
         ["export", "KEY", "--nodes", "1:2", "--format", "gif"],
+        ["export", "KEY", "--nodes", " , "],
         ["comment", "delete", "KEY"],
     ],
 )
