@@ -22,6 +22,89 @@ figma 0.1.0
 
 The npm package `silships/figma-cli` also installs a `figma-cli` executable. If both are installed, whichever directory comes first on `PATH` wins. Run `command -v figma-cli` to check which one you get, or use the `figma` alias.
 
+## Usage
+
+Every command talks to the Figma REST API with a personal access token. Create one under Figma account settings and export it:
+
+```sh
+export FIGMA_TOKEN=figd_...
+export FIGMA_API_BASE=https://api.figma.com   # optional, this is the default
+```
+
+Every subcommand prints human-readable text by default and a JSON document on stdout with `--json`.
+
+| Command | Figma endpoint |
+| --- | --- |
+| `figma auth check` | `GET /v1/me` |
+| `figma file get <file_key> [--depth N]` | `GET /v1/files/{file_key}?depth=N` |
+| `figma export <file_key> --nodes <ids> [--format png\|svg] [--output DIR]` | `GET /v1/images/{file_key}`, then the asset URLs |
+| `figma comment list <file_key>` | `GET /v1/files/{file_key}/comments` |
+| `figma comment post <file_key> --message TEXT [--comment-id ID] [--node-id ID]` | `POST /v1/files/{file_key}/comments` |
+| `figma comment delete <file_key> <comment_id>` | `DELETE /v1/files/{file_key}/comments/{comment_id}` |
+
+The file key is the segment after `/design/` (or `/file/`) in a Figma URL. Node ids use the `1:2` form; a URL shows them as `node-id=1-2`.
+
+### Examples
+
+Check the token:
+
+```console
+$ figma auth check --json
+{
+  "id": "123456789",
+  "handle": "Design Bot",
+  "email": "bot@example.com"
+}
+```
+
+Inspect only the pages of a file. `--depth` is passed to Figma, so the server trims the tree before it is sent:
+
+```sh
+figma file get AbCdEf123 --depth 1
+figma file get AbCdEf123 --depth 2 --json | jq '.document.children[].name'
+```
+
+Render two frames to PNG and print where they were written:
+
+```console
+$ figma export AbCdEf123 --nodes 1:2,1:3 --output shots
+shots/1-2.png
+shots/1-3.png
+```
+
+Post a comment pinned to a frame, reply to it, list the thread, then clean up:
+
+```sh
+id=$(figma comment post AbCdEf123 --message "Spacing is off" --node-id 1:2 --json | jq -r .id)
+figma comment post AbCdEf123 --message "Fixed in the next build" --comment-id "$id"
+figma comment list AbCdEf123
+figma comment delete AbCdEf123 "$id"
+```
+
+### Errors and exit codes
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 2 | Usage error (bad or missing arguments) |
+| 3 | Figma API, network, or local write failure |
+
+With `--json`, a failure prints a JSON object on stdout; without it, a one-line message goes to stderr. HTTP 401, 403, 404 and 5xx become `unauthorized`, `forbidden`, `not_found` and `server_error`:
+
+```json
+{"error": "forbidden", "status": 403, "message": "Invalid token"}
+```
+
+HTTP 429 is reported at once, never retried, so the caller decides when to try again. `retry_after` comes from the `Retry-After` header and is `null` when Figma sends none:
+
+```json
+{"error": "rate_limit_exceeded", "status": 429, "retry_after": 30}
+```
+
+### Token safety
+
+A request carrying `X-Figma-Token` follows no redirects. Any 3xx answer is refused with `{"error": "redirect_refused"}` and exit code 3 before a second request is made, so the token never reaches another host. Exported images are downloaded from the pre-signed URLs Figma returns with a separate request that carries no token; only that request follows redirects.
+
 ## Run without installing
 
 Before the first PyPI release, run straight from the repository with [uv](https://docs.astral.sh/uv/):
@@ -46,7 +129,9 @@ ruff format --check .
 pytest tests/
 ```
 
-The tests are hermetic: no network access and no Figma token are needed.
+The tests are hermetic: no network access and no Figma token are needed. The redirect tests use real sockets on `127.0.0.1`.
+
+`tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` and `FIGMA_TEST_FILE_KEY` are set (add `FIGMA_TEST_NODE_ID` to exercise export). It posts one comment and deletes it. CI runs it in the `live` job from the `FIGMA_TOKEN` secret and the `FIGMA_TEST_FILE_KEY` / `FIGMA_TEST_NODE_ID` repository variables, and skips it when they are absent.
 
 ## Release
 
