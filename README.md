@@ -2,219 +2,30 @@
 
 Headless Figma CLI for AI coding agents and automated design inspection.
 
-Requires Python 3.11 or newer. Licensed under MIT.
+Inspect Figma files, nodes and design variables, export nodes to PNG or SVG, and manage comments from a terminal, CI job or agent, with JSON output and stable exit codes. Zero runtime dependencies; requires Python 3.11 or newer.
 
-## Commands
+**Documentation: https://figma-cli.readthedocs.io/**
 
-The package installs two console scripts that run the same entrypoint:
-
-- `figma-cli`
-- `figma` (short alias)
-
-Each reports its own name in `--help` and `--version`:
-
-```console
-$ figma-cli --version
-figma-cli 0.1.0
-$ figma --version
-figma 0.1.0
-```
-
-The npm package `silships/figma-cli` also installs a `figma-cli` executable. If both are installed, whichever directory comes first on `PATH` wins. Run `command -v figma-cli` to check which one you get, or use the `figma` alias.
-
-## Usage
-
-Every command talks to the Figma REST API with either a personal access token or an OAuth token from your own Figma OAuth app (see [OAuth login](#oauth-login)). Create a personal access token under Figma account settings (Security > Personal access tokens) with these scopes, the minimum the commands below need per [Figma's scope reference](https://developers.figma.com/docs/rest-api/scopes/):
-
-| Scope | Used by |
-| --- | --- |
-| `current_user:read` | `auth check`, `auth login` (`GET /v1/me`) |
-| `file_content:read` | `file get`, `node get`, `export` |
-| `file_comments:read` | `comment list` |
-| `file_comments:write` | `comment post`, `comment delete` |
-| `file_variables:read` | `variable list` (Figma Enterprise only, see below) |
-
-The Variables REST API is available only to full members of Figma Enterprise organizations, and the token needs `file_variables:read`. Anywhere else, `variable list` exits 3 with `{"error": "forbidden", "status": 403}`; the other commands do not need this scope.
-
-Then store it once with `figma auth login`:
+## Install
 
 ```sh
-figma auth login                       # interactive: browser OAuth if configured, else PAT steps and hidden prompt
-echo "$TOKEN" | figma auth login       # agents and CI: piped stdin
-figma auth login --token - < token.txt # same, explicit
+uvx figma-cli --help     # run without installing
+pip install figma-cli    # or install from PyPI
 ```
 
-`auth login` validates the token against `GET /v1/me` before writing anything. A rejected token exits 3 and leaves any existing token file untouched. A valid one is written to `~/.config/figma/token` with mode `0600` (its directory `0700`), through a temporary file renamed into place, so a failed write keeps the previous token, and the command reports the authenticated `id`, `handle` and `email` plus the file path. Prefer stdin over `--token <value>`, which exposes the token in process listings and shell history. Empty stdin exits 2. Without OAuth client credentials, the interactive prompt first explains how to enable 1-click browser login (export `FIGMA_CLIENT_ID` and `FIGMA_CLIENT_SECRET`, see [OAuth login](#oauth-login)), then lists the personal access token steps. Add `--no-browser` to skip opening the settings page.
+The package installs two equivalent commands, `figma-cli` and the short alias `figma`.
 
-`auth login` takes this personal access token path whenever `--token` is given, stdin is piped, or no OAuth client credentials are configured. Saving a personal access token also removes `~/.config/figma/token.json`, so stale OAuth tokens never shadow it.
-
-Alternatively, export the token. `FIGMA_TOKEN` takes precedence over the stored files whenever it is set and non-empty. A value starting `figu_` (an OAuth access token) is sent as `Authorization: Bearer`, anything else as `X-Figma-Token`:
+## Quickstart
 
 ```sh
-export FIGMA_TOKEN=figd_...
-export FIGMA_API_BASE=https://api.figma.com   # optional, this is the default
-```
-
-Credentials resolve in this order: `FIGMA_TOKEN`, then `~/.config/figma/token.json` (OAuth), then `~/.config/figma/token` (personal access token). With none of them, commands fail with `{"error": "missing_token"}` and exit code 3.
-
-### OAuth login
-
-figma-cli ships no OAuth app of its own: Figma authenticates the client with its secret on every token call, and a secret embedded in an open-source package is not a secret. Bring your own:
-
-1. Create an OAuth app in the [Figma developer console](https://www.figma.com/developers/apps) and register the redirect URL `http://127.0.0.1:54321/callback`. Grant it the scopes above (`file_variables:read` only on Enterprise).
-2. Export its credentials and log in from an interactive terminal:
-
-```sh
-export FIGMA_CLIENT_ID=...
-export FIGMA_CLIENT_SECRET=...
-figma auth login                 # opens the browser, waits on 127.0.0.1:54321
-figma auth login --port 8765     # if you registered http://127.0.0.1:8765/callback instead
-```
-
-`--client-id` and `--client-secret` override the variables, but a literal secret shows in process listings and shell history. The flow uses PKCE (S256) and a random `state`; a callback with the wrong `state` is answered with HTTP 400 and ignored. Because Figma matches redirect URLs exactly, a busy port is not swapped for another one: the command exits 2 with `{"error": "port_unavailable"}`. Add `--no-browser` to print the authorization URL without opening it.
-
-Over SSH, in a container, or anywhere the browser runs on another machine, its redirect to `127.0.0.1` never reaches figma-cli. While it waits, the command reads the terminal: after authorizing, copy the full URL from the browser's address bar (the page itself fails to load) and paste it at the `Paste the callback URL here` prompt. A `code=...&state=...` query string works too. The paste is held to the same checks as the browser redirect: the path must be `/callback` on the configured port and `state` must match, so a bare code without `state` is refused. A rejected paste is explained and the prompt returns while the loopback server keeps listening.
-
-The access token is checked against `GET /v1/me`, then the access token, refresh token, expiry, client id and client secret are written to `~/.config/figma/token.json` (mode `0600`, directory `0700`, atomic replace). Figma access tokens last 90 days. When the stored one has expired, the next command refreshes it through `POST /v1/oauth/refresh` before running. The refresh holds an advisory lock on `~/.config/figma/token.json.lock` and re-reads the file once it has the lock, so concurrent commands refresh once rather than invalidating each other's tokens (Windows has no `fcntl`, so there the refresh runs unlocked). A refresh Figma rejects exits 3 with `{"error": "refresh_failed"}` rather than falling back to an older personal access token; run `figma auth login` again.
-
-Every subcommand prints human-readable text by default and a JSON document on stdout with `--json`.
-
-| Command | Figma endpoint |
-| --- | --- |
-| `figma auth login [--token TOKEN\|-] [--no-browser]` | `GET /v1/me`, then writes `~/.config/figma/token` |
-| `figma auth login [--client-id ID] [--client-secret SECRET] [--port PORT]` | OAuth: `POST /v1/oauth/token`, `GET /v1/me`, then writes `~/.config/figma/token.json` |
-| `figma auth check` | `GET /v1/me` |
-| `figma file get <file_key> [--depth N]` | `GET /v1/files/{file_key}?depth=N` |
-| `figma node get <file_key> --nodes <ids> [--depth N] [--geometry paths]` | `GET /v1/files/{file_key}/nodes?ids=<ids>&depth=N&geometry=paths` |
-| `figma variable list <file_key> [--published]` | `GET /v1/files/{file_key}/variables/local`, or `/variables/published` with `--published` |
-| `figma export <file_key> --nodes <ids> [--format png\|svg] [--output DIR]` | `GET /v1/images/{file_key}`, then the asset URLs |
-| `figma comment list <file_key>` | `GET /v1/files/{file_key}/comments` |
-| `figma comment post <file_key> --message TEXT [--comment-id ID] [--node-id ID]` | `POST /v1/files/{file_key}/comments` |
-| `figma comment delete <file_key> <comment_id>` | `DELETE /v1/files/{file_key}/comments/{comment_id}` |
-
-The file key is the segment after `/design/` (or `/file/`) in a Figma URL. Node ids use the `1:2` form; a URL shows them as `node-id=1-2`.
-
-### Examples
-
-Check the token:
-
-```console
-$ figma auth check --json
-{
-  "id": "123456789",
-  "handle": "Design Bot",
-  "email": "bot@example.com"
-}
-```
-
-Inspect only the pages of a file. `--depth` is passed to Figma, so the server trims the tree before it is sent:
-
-```sh
+figma auth login                                  # store a personal access token
+figma auth check --json
 figma file get AbCdEf123 --depth 1
-figma file get AbCdEf123 --depth 2 --json | jq '.document.children[].name'
-```
-
-Fetch only the subtrees you need instead of the whole file. Ids Figma cannot find come back as `null` in the JSON and as a `not found` line in the text output; the command still exits 0:
-
-```console
-$ figma node get AbCdEf123 --nodes 1:2,9:9 --depth 1
-Spec (last modified 2026-01-01T00:00:00Z)
-FRAME Card (1:2)
-  TEXT Title (1:3)
-Node 9:9: not found
-```
-
-`--geometry paths` adds vector path data to each node. With `--json`, the response is Figma's unchanged, keyed by node id under `nodes`.
-
-List the design variables in a file, one collection per block with each variable's resolved type and its value in every mode (colors as hex, aliases as `-> <name>`, or `-> <id>` when the aliased variable is not in the response, such as one from a library). `--published` lists the variables this file publishes to its library instead; Figma returns no per-mode values for those:
-
-```console
-$ figma variable list AbCdEf123
-Colors (VariableCollectionId:1:1) [modes: Light, Dark]
-  brand/primary  COLOR  Light=#FF0000  Dark=#00000080
-  text/default  COLOR  Light=-> brand/primary  Dark=-> VariableID:9:9
-  radius  FLOAT  Light=4  Dark=8
-```
-
-Render two frames to PNG and print where they were written. Files are named `<file_key>_<node_id>.<format>` with `:` and other unsafe characters replaced by `-`; re-exporting the same node overwrites its file:
-
-```console
-$ figma export AbCdEf123 --nodes 1:2,1:3 --output shots
-shots/AbCdEf123_1-2.png
-shots/AbCdEf123_1-3.png
-```
-
-Post a comment pinned to a frame, reply to it, list the thread, then clean up:
-
-```sh
-id=$(figma comment post AbCdEf123 --message "Spacing is off" --node-id 1:2 --json | jq -r .id)
-figma comment post AbCdEf123 --message "Fixed in the next build" --comment-id "$id"
+figma export AbCdEf123 --nodes 1:2 --output shots
 figma comment list AbCdEf123
-figma comment delete AbCdEf123 "$id"
 ```
 
-### Errors and exit codes
-
-| Exit code | Meaning |
-| --- | --- |
-| 0 | Success |
-| 2 | Usage error (bad or missing arguments) |
-| 3 | Figma API, network, or local write failure |
-
-With `--json`, a failure prints a JSON object on stdout; without it, a one-line message goes to stderr. HTTP 401, 403, 404 and 5xx become `unauthorized`, `forbidden`, `not_found` and `server_error`:
-
-```json
-{"error": "forbidden", "status": 403, "message": "Invalid token"}
-```
-
-HTTP 429 is reported at once, never retried, so the caller decides when to try again. `retry_after` comes from the `Retry-After` header and is `null` when Figma sends none:
-
-```json
-{"error": "rate_limit_exceeded", "status": 429, "retry_after": 30}
-```
-
-### Token safety
-
-A request carrying a credential (`X-Figma-Token`, `Authorization: Bearer`, or the `Authorization: Basic` client credentials on the OAuth token calls) follows no redirects. Any 3xx answer is refused with `{"error": "redirect_refused"}` and exit code 3 before a second request is made, so the credential never reaches another host. Exported images are downloaded from the pre-signed URLs Figma returns with a separate request that carries no token; only that request follows redirects.
-
-## Installation and quick run
-
-Run on-demand without installing via [uv](https://docs.astral.sh/uv/):
-
-```sh
-uvx figma-cli --help
-uvx figma-cli auth check --json
-```
-
-Or install from [PyPI](https://pypi.org/project/figma-cli/):
-
-```sh
-pip install figma-cli
-```
-
-From a local checkout:
-
-```sh
-uvx --from . figma-cli --version
-```
-
-## Development
-
-```sh
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-ruff check .
-ruff format --check .
-pytest tests/
-```
-
-The tests are hermetic: no network access and no Figma token are needed, and `HOME` points at a temporary directory so a stored token never leaks in. The redirect tests use real sockets on `127.0.0.1`.
-
-`tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` is set. With the token alone it checks `auth check` and runs `auth login` from stdin into a temporary `HOME`; the file, comment, export, node and variable checks also need `FIGMA_TEST_FILE_KEY` (add `FIGMA_TEST_NODE_ID` to exercise export and `node get`). The `node get` check also asserts the call takes under 2 seconds and returns less than `file get` does on the same file. The variable check passes on either outcome the plan allows: collections on an Enterprise token, or exit 3 `forbidden` elsewhere. The comment check posts one comment and deletes it. CI runs it in the `live` job from the `FIGMA_TOKEN` secret and the `FIGMA_TEST_FILE_KEY` / `FIGMA_TEST_NODE_ID` repository variables, and skips it when they are absent.
-
-## Release
-
-Bump `__version__` in `src/figma_cli/__init__.py`, merge, then push a matching tag (`v0.1.0` for `0.1.0`). The release workflow refuses a tag that does not match `__version__`, builds the sdist and wheel, runs `twine check`, and publishes to PyPI through trusted publishing (OIDC, the `pypi` environment).
+Authentication (personal access tokens and OAuth), the full command reference, exit codes, the Python API and the development guide are on the [documentation site](https://figma-cli.readthedocs.io/).
 
 ## License
 

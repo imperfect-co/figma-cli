@@ -1,0 +1,60 @@
+# Zensical site configuration: https://zensical.org/docs/setup/basics/
+# Build locally with: pip install -e ".[docs]" && zensical build --strict
+
+[project]
+site_name = "figma-cli"
+site_description = "Headless Figma CLI for AI coding agents and automated design inspection."
+site_url = "https://figma-cli.readthedocs.io/"
+repo_url = "https://github.com/imperfect-co/figma-cli"
+repo_name = "imperfect-co/figma-cli"
+edit_uri = "edit/main/docs/"
+docs_dir = "docs"
+site_dir = "site"
+nav = [
+  { "Home" = "index.md" },
+  { "Authentication" = "auth.md" },
+  { "CLI Commands" = "commands.md" },
+  { "Python API" = "client.md" },
+  { "Development" = "development.md" },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.action.edit",
+  "content.code.copy",
+  "navigation.expand",
+  "navigation.instant",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.top",
+  "navigation.tracking",
+  "toc.follow",
+]
+
+# Follow the system preference first, then let the reader pin light or dark.
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+toc.permalink = true
+pymdownx.highlight.anchor_linenums = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences = {}
