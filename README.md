@@ -24,17 +24,39 @@ The npm package `silships/figma-cli` also installs a `figma-cli` executable. If 
 
 ## Usage
 
-Every command talks to the Figma REST API with a personal access token. Create one under Figma account settings and export it:
+Every command talks to the Figma REST API with a personal access token. Create one under Figma account settings (Security > Personal access tokens) with these scopes, the minimum the commands below need per [Figma's scope reference](https://developers.figma.com/docs/rest-api/scopes/):
+
+| Scope | Used by |
+| --- | --- |
+| `current_user:read` | `auth check`, `auth login` (`GET /v1/me`) |
+| `file_content:read` | `file get`, `export` |
+| `file_comments:read` | `comment list` |
+| `file_comments:write` | `comment post`, `comment delete` |
+
+Then store it once with `figma auth login`:
+
+```sh
+figma auth login                       # interactive: prints the steps, opens settings, hidden prompt
+echo "$TOKEN" | figma auth login       # agents and CI: piped stdin
+figma auth login --token - < token.txt # same, explicit
+```
+
+`auth login` validates the token against `GET /v1/me` before writing anything. A rejected token exits 3 and leaves any existing token file untouched. A valid one is written to `~/.config/figma/token` with mode `0600` (its directory `0700`), through a temporary file renamed into place, so a failed write keeps the previous token, and the command reports the authenticated `id`, `handle` and `email` plus the file path. Prefer stdin over `--token <value>`, which exposes the token in process listings and shell history. Empty stdin exits 2. Add `--no-browser` to skip opening the settings page.
+
+Alternatively, export the token. `FIGMA_TOKEN` takes precedence over the stored file whenever it is set and non-empty:
 
 ```sh
 export FIGMA_TOKEN=figd_...
 export FIGMA_API_BASE=https://api.figma.com   # optional, this is the default
 ```
 
+With neither set, commands fail with `{"error": "missing_token"}` and exit code 3.
+
 Every subcommand prints human-readable text by default and a JSON document on stdout with `--json`.
 
 | Command | Figma endpoint |
 | --- | --- |
+| `figma auth login [--token TOKEN\|-] [--no-browser]` | `GET /v1/me`, then writes `~/.config/figma/token` |
 | `figma auth check` | `GET /v1/me` |
 | `figma file get <file_key> [--depth N]` | `GET /v1/files/{file_key}?depth=N` |
 | `figma export <file_key> --nodes <ids> [--format png\|svg] [--output DIR]` | `GET /v1/images/{file_key}`, then the asset URLs |
@@ -136,9 +158,9 @@ ruff format --check .
 pytest tests/
 ```
 
-The tests are hermetic: no network access and no Figma token are needed. The redirect tests use real sockets on `127.0.0.1`.
+The tests are hermetic: no network access and no Figma token are needed, and `HOME` points at a temporary directory so a stored token never leaks in. The redirect tests use real sockets on `127.0.0.1`.
 
-`tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` and `FIGMA_TEST_FILE_KEY` are set (add `FIGMA_TEST_NODE_ID` to exercise export). It posts one comment and deletes it. CI runs it in the `live` job from the `FIGMA_TOKEN` secret and the `FIGMA_TEST_FILE_KEY` / `FIGMA_TEST_NODE_ID` repository variables, and skips it when they are absent.
+`tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` is set. With the token alone it checks `auth check` and runs `auth login` from stdin into a temporary `HOME`; the file, comment and export checks also need `FIGMA_TEST_FILE_KEY` (add `FIGMA_TEST_NODE_ID` to exercise export). The comment check posts one comment and deletes it. CI runs it in the `live` job from the `FIGMA_TOKEN` secret and the `FIGMA_TEST_FILE_KEY` / `FIGMA_TEST_NODE_ID` repository variables, and skips it when they are absent.
 
 ## Release
 

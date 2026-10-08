@@ -14,11 +14,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 DEFAULT_API_BASE = "https://api.figma.com"
 TOKEN_HEADER = "X-Figma-Token"
 TIMEOUT_SECONDS = 60
+EXIT_USAGE = 2
 EXIT_API_ERROR = 3
 
 _ERROR_NAMES = {
@@ -93,6 +95,26 @@ def _network_error(err: OSError) -> FigmaError:
     return FigmaError({"error": "network_error", "message": str(reason)})
 
 
+def token_path() -> Path:
+    """Where ``figma auth login`` stores the token: ``~/.config/figma/token``."""
+    return Path.home() / ".config" / "figma" / "token"
+
+
+def read_token_file() -> str:
+    """Return the stored token, or "" when no regular file holds one."""
+    path = token_path()
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as err:
+        raise FigmaError({"error": "token_unreadable", "message": str(err)}) from None
+
+
+def api_base() -> str:
+    return os.environ.get("FIGMA_API_BASE", "").strip() or DEFAULT_API_BASE
+
+
 def _quote(segment: str) -> str:
     return urllib.parse.quote(segment, safe="")
 
@@ -113,13 +135,15 @@ class FigmaClient:
 
     @classmethod
     def from_env(cls) -> "FigmaClient":
-        token = os.environ.get("FIGMA_TOKEN", "").strip()
+        """Read FIGMA_TOKEN, falling back to the stored token file."""
+        token = os.environ.get("FIGMA_TOKEN", "").strip() or read_token_file()
         if not token:
-            raise FigmaError(
-                {"error": "missing_token", "message": "FIGMA_TOKEN is not set"}
+            message = (
+                f"FIGMA_TOKEN is not set and {token_path()} holds no token;"
+                " run 'figma auth login'"
             )
-        base = os.environ.get("FIGMA_API_BASE", "").strip() or DEFAULT_API_BASE
-        return cls(token, base)
+            raise FigmaError({"error": "missing_token", "message": message})
+        return cls(token, api_base())
 
     def request(
         self,

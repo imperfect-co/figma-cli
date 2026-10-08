@@ -13,21 +13,32 @@ from typing import Any
 
 from figma_cli import __version__
 from figma_cli.client import FigmaClient, FigmaError, download
+from figma_cli.login import login
 
-Handler = Callable[[FigmaClient, argparse.Namespace], tuple[Any, str]]
+# Most handlers take (client, args); those marked needs_client=False take (args).
+Handler = Callable[..., tuple[Any, str]]
 
 
 def _print_json(payload: Any) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
-def _auth_check(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
-    me = client.me()
+def _identity(me: dict[str, Any]) -> tuple[dict[str, Any], str]:
     ident = {key: me.get(key) for key in ("id", "handle", "email")}
     return (
         ident,
         f"Authenticated as {ident['handle']} <{ident['email']}> ({ident['id']})",
     )
+
+
+def _auth_check(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
+    return _identity(client.me())
+
+
+def _auth_login(args: argparse.Namespace) -> tuple[Any, str]:
+    me, path = login(args)
+    ident, text = _identity(me)
+    return {**ident, "token_path": str(path)}, f"{text}\nToken saved to {path}"
 
 
 def _tree_lines(node: dict[str, Any], indent: int = 0) -> list[str]:
@@ -125,7 +136,10 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Headless Figma CLI for AI coding agents and automated design inspection."
         ),
-        epilog="Environment: FIGMA_TOKEN (required), FIGMA_API_BASE (optional).",
+        epilog=(
+            "Environment: FIGMA_TOKEN (optional when 'figma auth login' has stored"
+            " ~/.config/figma/token), FIGMA_API_BASE (optional)."
+        ),
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -134,10 +148,30 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--json", action="store_true", help="print structured JSON")
     commands = parser.add_subparsers(dest="command", metavar="<command>")
 
-    auth = commands.add_parser("auth", help="token checks")
+    auth = commands.add_parser("auth", help="token setup and checks")
     auth_cmds = auth.add_subparsers(dest="action", metavar="<action>", required=True)
-    p = auth_cmds.add_parser("check", parents=[common], help="validate FIGMA_TOKEN")
+    p = auth_cmds.add_parser(
+        "check", parents=[common], help="validate FIGMA_TOKEN or stored token file"
+    )
     p.set_defaults(handler=_auth_check)
+    p = auth_cmds.add_parser(
+        "login",
+        parents=[common],
+        help="validate a token and store it in ~/.config/figma/token",
+    )
+    p.add_argument(
+        "--token",
+        help=(
+            "token value, or '-' to read stdin; a literal value shows in ps and"
+            " shell history, so prefer piped stdin, which is read without this flag"
+        ),
+    )
+    p.add_argument(
+        "--browser",
+        action=argparse.BooleanOptionalAction,
+        help="open Figma settings when prompting interactively (default: open)",
+    )
+    p.set_defaults(handler=_auth_login, needs_client=False)
 
     file = commands.add_parser("file", help="file inspection")
     file_cmds = file.add_subparsers(dest="action", metavar="<action>", required=True)
@@ -194,7 +228,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     try:
-        payload, text = handler(FigmaClient.from_env(), args)
+        if getattr(args, "needs_client", True):
+            payload, text = handler(FigmaClient.from_env(), args)
+        else:
+            payload, text = handler(args)
     except FigmaError as err:
         if args.json:
             _print_json(err.payload)
