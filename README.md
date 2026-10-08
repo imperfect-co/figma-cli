@@ -36,12 +36,12 @@ Every command talks to the Figma REST API with either a personal access token or
 Then store it once with `figma auth login`:
 
 ```sh
-figma auth login                       # interactive: prints the steps, opens settings, hidden prompt
+figma auth login                       # interactive: browser OAuth if configured, else PAT steps and hidden prompt
 echo "$TOKEN" | figma auth login       # agents and CI: piped stdin
 figma auth login --token - < token.txt # same, explicit
 ```
 
-`auth login` validates the token against `GET /v1/me` before writing anything. A rejected token exits 3 and leaves any existing token file untouched. A valid one is written to `~/.config/figma/token` with mode `0600` (its directory `0700`), through a temporary file renamed into place, so a failed write keeps the previous token, and the command reports the authenticated `id`, `handle` and `email` plus the file path. Prefer stdin over `--token <value>`, which exposes the token in process listings and shell history. Empty stdin exits 2. Add `--no-browser` to skip opening the settings page.
+`auth login` validates the token against `GET /v1/me` before writing anything. A rejected token exits 3 and leaves any existing token file untouched. A valid one is written to `~/.config/figma/token` with mode `0600` (its directory `0700`), through a temporary file renamed into place, so a failed write keeps the previous token, and the command reports the authenticated `id`, `handle` and `email` plus the file path. Prefer stdin over `--token <value>`, which exposes the token in process listings and shell history. Empty stdin exits 2. Without OAuth client credentials, the interactive prompt first explains how to enable 1-click browser login (export `FIGMA_CLIENT_ID` and `FIGMA_CLIENT_SECRET`, see [OAuth login](#oauth-login)), then lists the personal access token steps. Add `--no-browser` to skip opening the settings page.
 
 `auth login` takes this personal access token path whenever `--token` is given, stdin is piped, or no OAuth client credentials are configured. Saving a personal access token also removes `~/.config/figma/token.json`, so stale OAuth tokens never shadow it.
 
