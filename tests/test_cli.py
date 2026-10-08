@@ -345,3 +345,12 @@ def test_login_rejected_token_writes_nothing(login_stub, home, monkeypatch, caps
     assert main(["auth", "login", "--json"]) == 3
     assert json.loads(capsys.readouterr().out) == payload
     assert not (home / ".config").exists()
+
+
+@pytest.mark.parametrize("token", ["figd_a\nfigd_b", "figd_a b", "figd_\x00"])
+def test_login_malformed_token_exits_two(token, login_stub, home, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", FakeStdin(token))
+    assert main(["auth", "login", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["error"] == "invalid_token"
+    assert login_stub == []
+    assert not (home / ".config").exists()

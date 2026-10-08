@@ -30,11 +30,13 @@ Create a personal access token for figma-cli:
 """
 
 
-class EmptyToken(FigmaError):
+class TokenInputError(FigmaError):
+    """A missing or malformed token on input: a usage error, exit 2."""
+
     exit_code = EXIT_USAGE
 
-    def __init__(self):
-        super().__init__({"error": "empty_token", "message": "no token was provided"})
+    def __init__(self, error: str, message: str):
+        super().__init__({"error": error, "message": message})
 
 
 def _prompt(open_browser: bool) -> str:
@@ -54,7 +56,9 @@ def candidate_token(args: argparse.Namespace) -> str:
         token = _prompt(args.browser is not False)
     token = token.strip()
     if not token:
-        raise EmptyToken()
+        raise TokenInputError("empty_token", "no token was provided")
+    if any(ch.isspace() or not ch.isprintable() for ch in token):
+        raise TokenInputError("invalid_token", "token contains whitespace")
     return token
 
 
@@ -89,4 +93,7 @@ def login(args: argparse.Namespace) -> tuple[dict, Path]:
     """Validate a candidate token, store it, and return (identity, path)."""
     token = candidate_token(args)
     me = FigmaClient(token, api_base()).me()
+    if not isinstance(me, dict) or not me.get("id"):
+        message = "GET /v1/me returned no user id"
+        raise FigmaError({"error": "invalid_response", "message": message})
     return me, save_token(token)

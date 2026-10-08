@@ -391,3 +391,14 @@ def test_login_failed_write_keeps_old_token(home, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["error"] == "write_failed"
     assert path.read_bytes() == original
     assert sorted(p.name for p in path.parent.iterdir()) == ["token"]
+
+
+@pytest.mark.parametrize("body", [b"{}", b"[]", b'{"handle": "x"}'])
+def test_login_without_identity_keeps_old_token(body, home, monkeypatch, capsys):
+    original = b"figd_working-token\n"
+    path = _seed(home, original)
+    with serve() as (api, rec):
+        rec.routes["/v1/me"] = (200, {}, body)
+        assert _login(monkeypatch, api, TOKEN) == 3
+    assert json.loads(capsys.readouterr().out)["error"] == "invalid_response"
+    assert path.read_bytes() == original
