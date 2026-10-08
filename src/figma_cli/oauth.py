@@ -12,15 +12,17 @@ import hashlib
 import html
 import json
 import os
+import queue
 import secrets
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
 from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,9 @@ REFRESH_PATH = "/v1/oauth/refresh"
 DEFAULT_PORT = 54321
 CALLBACK_PATH = "/callback"
 CALLBACK_TIMEOUT_SECONDS = 300
+POLL_SECONDS = 0.5  # how long a paste can wait for the loopback poll to yield
+_LOOPBACK = ("127.0.0.1", "localhost")
+PASTE_PROMPT = "Paste the callback URL here (or finish in the browser): "
 EXPIRY_MARGIN_SECONDS = 60
 SCOPES = (
     "current_user:read",
@@ -244,13 +249,26 @@ _PAGE = """<!doctype html>
 """
 
 
-class OAuthCallbackServer(HTTPServer):
-    """Loopback server that waits for one valid ``/callback`` request."""
+class OAuthCallbackServer(ThreadingHTTPServer):
+    """Loopback server that waits for one valid ``/callback`` request.
+
+    Each connection is served on its own daemon thread, so an idle browser
+    preconnect cannot hold the polling loop (and a paste) for the read timeout.
+    """
+
+    block_on_close = False  # server_close() must not wait out an idle socket
 
     def __init__(self, port: int, state: str):
         self.state = state
         self.result: dict[str, str] | None = None
+        self._accept_lock = threading.Lock()
         super().__init__(("127.0.0.1", port), _CallbackHandler)
+
+    def accept(self, result: dict[str, str]) -> None:
+        """Record ``result`` unless one is already held: the first one wins."""
+        with self._accept_lock:
+            if self.result is None:
+                self.result = result
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
@@ -267,10 +285,10 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             detail = "The state parameter does not match this login attempt."
             return self._page(400, "Bad request", detail)
         if query.get("error") or not query.get("code"):
-            self.server.result = {"error": query.get("error") or "missing_code"}
+            self.server.accept({"error": query.get("error") or "missing_code"})
             detail = "Figma did not authorize figma-cli. You can close this tab."
             return self._page(400, "Authorization failed", detail)
-        self.server.result = {"code": query["code"]}
+        self.server.accept({"code": query["code"]})
         detail = "figma-cli is authorized. You can close this tab."
         self._page(200, "Authorization complete", detail)
 
@@ -298,15 +316,91 @@ def _bind(port: int, state: str) -> OAuthCallbackServer:
         raise UsageError("port_unavailable", message) from None
 
 
-def _await_code(server: OAuthCallbackServer, timeout: float) -> str:
+def parse_pasted_callback(text: str, state: str, port: int) -> dict[str, str]:
+    """Read a pasted callback URL or query string into a callback result.
+
+    Holds a paste to the loopback handler's bar: the path must be the callback
+    and ``state`` must match, so a bare code (no state, no CSRF check) is refused.
+    Returns ``{"code": ...}`` or ``{"error": ...}``; raises ValueError to re-prompt.
+    """
+    text = text.strip()
+    url = urllib.parse.urlsplit(text)
+    if url.scheme or url.netloc:
+        try:
+            where = (url.scheme, url.hostname, url.port, url.path)
+        except ValueError:
+            where = None
+        if where not in {("http", h, port, CALLBACK_PATH) for h in _LOOPBACK}:
+            raise ValueError(f"expected a URL starting with {redirect_uri(port)}")
+        text = url.query
+    query = dict(urllib.parse.parse_qsl(text.removeprefix("?")))
+    if "state" not in query:
+        raise ValueError("no state parameter; paste the whole callback URL")
+    if not secrets.compare_digest(query["state"].encode(), state.encode()):
+        raise ValueError("the state parameter does not match this login attempt")
+    if query.get("error"):
+        return {"error": query["error"]}
+    if not query.get("code"):
+        raise ValueError("no code parameter; paste the whole callback URL")
+    return {"code": query["code"]}
+
+
+def _read_pastes(stream, pastes: queue.SimpleQueue) -> None:
+    """Queue each non-blank line from ``stream``; return on EOF or a read error."""
+    try:
+        for line in iter(stream.readline, ""):
+            if line.strip():
+                pastes.put(line)
+    except (OSError, ValueError):
+        pass
+
+
+def _start_paste_reader(stream) -> queue.SimpleQueue:
+    pastes: queue.SimpleQueue = queue.SimpleQueue()
+    reader = threading.Thread(target=_read_pastes, args=(stream, pastes), daemon=True)
+    reader.start()
+    return pastes
+
+
+def _take_paste(server: OAuthCallbackServer, pastes: queue.SimpleQueue) -> None:
+    """Move queued pastes into ``server.result``; re-prompt on a rejected one."""
+    while server.result is None:
+        try:
+            line = pastes.get_nowait()
+        except queue.Empty:
+            return
+        try:
+            port = server.server_port
+            server.accept(parse_pasted_callback(line, server.state, port))
+        except ValueError as err:
+            print(f"Not accepted: {err}.", file=sys.stderr)
+            print(PASTE_PROMPT, end="", file=sys.stderr, flush=True)
+
+
+def _await_code(
+    server: OAuthCallbackServer,
+    timeout: float,
+    pastes: queue.SimpleQueue | None = None,
+) -> str:
+    """Wait for the browser redirect or, when ``pastes`` is given, a pasted one.
+
+    The loopback server is polled in short slices so a paste is noticed within
+    POLL_SECONDS rather than after the whole timeout.
+    """
     deadline = time.monotonic() + timeout
     while server.result is None:
+        if pastes is not None:
+            _take_paste(server, pastes)
+            if server.result is not None:
+                break
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             message = f"no authorization arrived within {int(timeout)}s"
             raise FigmaError({"error": "oauth_timeout", "message": message})
-        server.timeout = remaining
+        server.timeout = min(remaining, POLL_SECONDS)
         server.handle_request()
+        if pastes is not None and server.result is not None:
+            print("\nAuthorization received via browser redirect.", file=sys.stderr)
     if "code" not in server.result:
         message = f"Figma returned {server.result['error']}"
         raise FigmaError({"error": "oauth_denied", "message": message})
@@ -319,7 +413,11 @@ def login(
     open_browser: bool = True,
     timeout: float = CALLBACK_TIMEOUT_SECONDS,
 ) -> tuple[dict[str, Any], Path]:
-    """Run the browser flow, validate the token, store it; return (identity, path)."""
+    """Run the browser flow, validate the token, store it; return (identity, path).
+
+    On a terminal the callback URL can also be pasted, for a browser on another
+    machine whose redirect never reaches this loopback server (SSH, containers).
+    """
     verifier = generate_code_verifier()
     state = secrets.token_urlsafe(32)
     server = _bind(port, state)
@@ -329,7 +427,11 @@ def login(
         print(f"Open this URL to authorize figma-cli:\n  {url}", file=sys.stderr)
         if open_browser:
             webbrowser.open(url)
-        code = _await_code(server, timeout)
+        pastes = None
+        if sys.stdin is not None and sys.stdin.isatty():
+            print(PASTE_PROMPT, end="", file=sys.stderr, flush=True)
+            pastes = _start_paste_reader(sys.stdin)
+        code = _await_code(server, timeout, pastes)
     finally:
         server.server_close()
     body = exchange_code(client, code, verifier, port)
