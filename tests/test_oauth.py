@@ -266,6 +266,18 @@ def test_idle_connection_does_not_delay_a_paste():
     assert time.monotonic() - started < 2  # the handler read timeout is 10s
 
 
+def test_late_callback_cannot_overwrite_an_accepted_result():
+    """The first accepted result wins; a later browser denial must not flip it."""
+    port = _free_port()
+    server = oauth._bind(port, "s")
+    try:
+        server.accept({"code": "pasted"})
+        server.accept({"error": "access_denied"})
+        assert oauth._await_code(server, 30) == "pasted"
+    finally:
+        server.server_close()
+
+
 def test_bad_paste_reprompts_and_loopback_keeps_listening(capsys):
     port = _free_port()
     server = oauth._bind(port, "good-state")

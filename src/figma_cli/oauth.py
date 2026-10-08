@@ -261,7 +261,14 @@ class OAuthCallbackServer(ThreadingHTTPServer):
     def __init__(self, port: int, state: str):
         self.state = state
         self.result: dict[str, str] | None = None
+        self._accept_lock = threading.Lock()
         super().__init__(("127.0.0.1", port), _CallbackHandler)
+
+    def accept(self, result: dict[str, str]) -> None:
+        """Record ``result`` unless one is already held: the first one wins."""
+        with self._accept_lock:
+            if self.result is None:
+                self.result = result
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
@@ -278,10 +285,10 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             detail = "The state parameter does not match this login attempt."
             return self._page(400, "Bad request", detail)
         if query.get("error") or not query.get("code"):
-            self.server.result = {"error": query.get("error") or "missing_code"}
+            self.server.accept({"error": query.get("error") or "missing_code"})
             detail = "Figma did not authorize figma-cli. You can close this tab."
             return self._page(400, "Authorization failed", detail)
-        self.server.result = {"code": query["code"]}
+        self.server.accept({"code": query["code"]})
         detail = "figma-cli is authorized. You can close this tab."
         self._page(200, "Authorization complete", detail)
 
@@ -364,7 +371,7 @@ def _take_paste(server: OAuthCallbackServer, pastes: queue.SimpleQueue) -> None:
             return
         try:
             port = server.server_port
-            server.result = parse_pasted_callback(line, server.state, port)
+            server.accept(parse_pasted_callback(line, server.state, port))
         except ValueError as err:
             print(f"Not accepted: {err}.", file=sys.stderr)
             print(PASTE_PROMPT, end="", file=sys.stderr, flush=True)
@@ -394,11 +401,10 @@ def _await_code(
         server.handle_request()
         if pastes is not None and server.result is not None:
             print("\nAuthorization received via browser redirect.", file=sys.stderr)
-    result = server.result  # read once: a late handler thread may still write
-    if "code" not in result:
-        message = f"Figma returned {result['error']}"
+    if "code" not in server.result:
+        message = f"Figma returned {server.result['error']}"
         raise FigmaError({"error": "oauth_denied", "message": message})
-    return result["code"]
+    return server.result["code"]
 
 
 def login(
