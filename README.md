@@ -209,6 +209,8 @@ ty check src
 pytest tests/
 ```
 
+`ty check src` type-checks the package against Python 3.11, the support floor, as set in `[tool.ty.environment]`. The dev extra pins `ty` to an exact version because its diagnostics still change between pre-1.0 releases; bump the pin deliberately.
+
 The tests are hermetic: no network access and no Figma token are needed, and `HOME` points at a temporary directory so a stored token never leaks in. The redirect tests use real sockets on `127.0.0.1`.
 
 `tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` is set. With the token alone it checks `auth check` and runs `auth login` from stdin into a temporary `HOME`; the file, comment, export, node and variable checks also need `FIGMA_TEST_FILE_KEY` (add `FIGMA_TEST_NODE_ID` to exercise export and `node get`). The `node get` check also asserts the call takes under 2 seconds and returns less than `file get` does on the same file. The variable check passes on either outcome the plan allows: collections on an Enterprise token, or exit 3 `forbidden` elsewhere. The comment check posts one comment and deletes it. CI runs it in the `live` job from the `FIGMA_TOKEN` secret and the `FIGMA_TEST_FILE_KEY` / `FIGMA_TEST_NODE_ID` repository variables, and skips it when they are absent.
