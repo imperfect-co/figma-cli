@@ -353,3 +353,41 @@ def test_undecodable_token_file_is_structured(home, monkeypatch, capsys):
     monkeypatch.delenv("FIGMA_TOKEN", raising=False)
     assert main(["auth", "check", "--json"]) == 3
     assert json.loads(capsys.readouterr().out)["error"] == "token_unreadable"
+
+
+def test_login_replaces_symlink_without_following_it(home, monkeypatch, capsys):
+    target = home / "elsewhere"
+    target.write_text("untouched\n")
+    path = _token_file(home)
+    path.parent.mkdir(parents=True)
+    path.symlink_to(target)
+    with serve() as (api, rec):
+        rec.routes["/v1/me"] = (200, {}, json.dumps(ME).encode())
+        assert _login(monkeypatch, api, TOKEN) == 0
+    assert target.read_text() == "untouched\n"
+    assert not path.is_symlink()
+    assert path.read_text() == TOKEN + "\n"
+
+
+def test_login_tightens_existing_directory(home, monkeypatch, capsys):
+    _token_file(home).parent.mkdir(parents=True, mode=0o755)
+    with serve() as (api, rec):
+        rec.routes["/v1/me"] = (200, {}, json.dumps(ME).encode())
+        assert _login(monkeypatch, api, TOKEN) == 0
+    assert stat.S_IMODE(os.stat(_token_file(home).parent).st_mode) == 0o700
+
+
+def test_login_failed_write_keeps_old_token(home, monkeypatch, capsys):
+    original = b"figd_working-token\n"
+    path = _seed(home, original)
+
+    def fail(*args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("figma_cli.login.os.replace", fail)
+    with serve() as (api, rec):
+        rec.routes["/v1/me"] = (200, {}, json.dumps(ME).encode())
+        assert _login(monkeypatch, api, TOKEN) == 3
+    assert json.loads(capsys.readouterr().out)["error"] == "write_failed"
+    assert path.read_bytes() == original
+    assert sorted(p.name for p in path.parent.iterdir()) == ["token"]

@@ -41,7 +41,7 @@ echo "$TOKEN" | figma auth login       # agents and CI: piped stdin
 figma auth login --token - < token.txt # same, explicit
 ```
 
-`auth login` validates the token against `GET /v1/me` before writing anything. A rejected token exits 3 and leaves any existing token file untouched. A valid one is written to `~/.config/figma/token`, created with mode `0600` (and its directory `0700`), and the command reports the authenticated `id`, `handle` and `email` plus the file path. Prefer stdin over `--token <value>`, which exposes the token in process listings and shell history. Empty stdin exits 2. Add `--no-browser` to skip opening the settings page.
+`auth login` validates the token against `GET /v1/me` before writing anything. A rejected token exits 3 and leaves any existing token file untouched. A valid one is written to `~/.config/figma/token` with mode `0600` (its directory `0700`), through a temporary file renamed into place, so a failed write keeps the previous token, and the command reports the authenticated `id`, `handle` and `email` plus the file path. Prefer stdin over `--token <value>`, which exposes the token in process listings and shell history. Empty stdin exits 2. Add `--no-browser` to skip opening the settings page.
 
 Alternatively, export the token. `FIGMA_TOKEN` takes precedence over the stored file whenever it is set and non-empty:
 

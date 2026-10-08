@@ -7,6 +7,7 @@ rejected token never replaces a working one.
 import argparse
 import getpass
 import os
+import secrets
 import sys
 import webbrowser
 from pathlib import Path
@@ -58,15 +59,27 @@ def candidate_token(args: argparse.Namespace) -> str:
 
 
 def save_token(token: str) -> Path:
-    """Write the token at mode 0600 from creation onwards, never wider."""
+    """Store the token at mode 0600, replacing any old file only once it is written.
+
+    The new file is created 0600 under a fresh name (O_EXCL, so never through a
+    planted file or symlink), then renamed over the old one: a failed write
+    leaves the previous token intact, and nothing is ever readable by others.
+    """
     path = token_path()
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}")
     try:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            if hasattr(os, "fchmod"):  # tighten a pre-existing, looser file
-                os.fchmod(fd, 0o600)
-            fh.write(token + "\n")
+        path.parent.chmod(0o700)  # refuses a directory owned by someone else
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(token + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
     except OSError as err:
         raise FigmaError({"error": "write_failed", "message": str(err)}) from None
     return path
