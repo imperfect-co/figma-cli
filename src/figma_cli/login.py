@@ -29,8 +29,10 @@ REDIRECT_URL = f"http://127.0.0.1:{oauth.DEFAULT_PORT}{oauth.CALLBACK_PATH}"
 SCOPES = oauth.SCOPES
 INSTRUCTIONS = f"""\
 For 1-click browser login, create an OAuth app at {APPS_URL}
-with redirect URL {REDIRECT_URL}, then export FIGMA_CLIENT_ID
-and FIGMA_CLIENT_SECRET and rerun figma auth login.
+with redirect URL {REDIRECT_URL} and grant these scopes:
+{chr(10).join(f"       {scope}" for scope in SCOPES)}
+Then export FIGMA_CLIENT_ID and FIGMA_CLIENT_SECRET and rerun
+figma auth login.
 
 Or create a personal access token for figma-cli:
   1. Open {SETTINGS_URL} and go to Security > Personal access tokens.
