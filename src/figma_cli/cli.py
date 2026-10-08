@@ -84,32 +84,77 @@ def _format_value(value: Any, names: dict[str, str]) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _variable_line(
-    var: dict[str, Any], modes: dict[str, str], names: dict[str, str]
-) -> str:
-    kind = var.get("resolvedType") or var.get("resolvedDataType") or "?"
-    values = [
-        f"{modes.get(mode_id, mode_id)}={_format_value(value, names)}"
-        for mode_id, value in (var.get("valuesByMode") or {}).items()
-    ]
-    return "  " + "  ".join([var.get("name", ""), kind, *values])
+_UNSET = object()
+
+
+class _Variables:
+    """A variables/local (or published) payload, resolved for text output.
+
+    An extended collection inherits its parent's variables: each of its modes
+    names a parentModeId, and variableOverrides replaces values per mode.
+    """
+
+    def __init__(self, meta: dict[str, Any]):
+        self.variables = meta.get("variables") or {}
+        self.collections = meta.get("variableCollections") or {}
+        self.names = {i: v.get("name", "") for i, v in self.variables.items()}
+        self.parents: dict[str, str | None] = {}
+        self.overrides: dict[str, dict[str, Any]] = {}
+        for coll in self.collections.values():
+            for mode in coll.get("modes") or []:
+                self.parents[mode.get("modeId")] = mode.get("parentModeId")
+            for var_id, by_mode in (coll.get("variableOverrides") or {}).items():
+                self.overrides.setdefault(var_id, {}).update(by_mode)
+
+    def members(self, coll_id: str, coll: dict[str, Any]) -> list[str]:
+        """Own and inherited ids; published collections list none, so match."""
+        own = coll.get("variableIds") or []
+        ids = list(dict.fromkeys([*own, *(coll.get("inheritedVariableIds") or [])]))
+        if ids:
+            return [i for i in ids if i in self.variables]
+        return [
+            i
+            for i, v in self.variables.items()
+            if v.get("variableCollectionId") == coll_id
+        ]
+
+    def value(self, var_id: str, mode_id: str | None) -> Any:
+        """An override, else the variable's own value, else the parent mode's."""
+        own = self.variables[var_id].get("valuesByMode") or {}
+        override = self.overrides.get(var_id, {})
+        while mode_id:
+            for source in (override, own):
+                if mode_id in source:
+                    return source[mode_id]
+            mode_id = self.parents.get(mode_id)
+        return _UNSET
+
+    def lines(self) -> list[str]:
+        lines = []
+        for coll_id, coll in self.collections.items():
+            modes = [(m.get("modeId"), m.get("name")) for m in coll.get("modes") or []]
+            names = ", ".join(name for _, name in modes)
+            lines.append(
+                f"{coll.get('name', '')} ({coll_id})" + (names and f" [modes: {names}]")
+            )
+            for var_id in self.members(coll_id, coll):
+                lines.append(self._line(var_id, modes))
+        return lines
+
+    def _line(self, var_id: str, modes: list[tuple[Any, Any]]) -> str:
+        var = self.variables[var_id]
+        kind = var.get("resolvedType") or var.get("resolvedDataType") or "?"
+        cells = [var.get("name", ""), kind]
+        for mode_id, name in modes:
+            value = self.value(var_id, mode_id)
+            if value is not _UNSET:
+                cells.append(f"{name}={_format_value(value, self.names)}")
+        return "  " + "  ".join(cells)
 
 
 def _variable_list(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
     data = client.get_variables(args.file_key, args.published)
-    meta = data.get("meta") or {}
-    variables = list((meta.get("variables") or {}).values())
-    names = {v.get("id", ""): v.get("name", "") for v in variables}
-    lines = []
-    for coll_id, coll in (meta.get("variableCollections") or {}).items():
-        modes = {m.get("modeId"): m.get("name") for m in coll.get("modes") or []}
-        mode_text = f" [modes: {', '.join(modes.values())}]" if modes else ""
-        lines.append(f"{coll.get('name', '')} ({coll_id}){mode_text}")
-        lines.extend(
-            _variable_line(v, modes, names)
-            for v in variables
-            if v.get("variableCollectionId") == coll_id
-        )
+    lines = _Variables(data.get("meta") or {}).lines()
     return data, "\n".join(lines) or "No variables."
 
 

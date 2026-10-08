@@ -300,6 +300,50 @@ def test_variable_list_human_published_shape(stub, monkeypatch, capsys):
     assert capsys.readouterr().out.splitlines() == ["Tokens (C:1)", "  gap  FLOAT"]
 
 
+def test_variable_list_human_extended_collection(stub, monkeypatch, capsys):
+    blue = {"r": 0, "g": 0, "b": 1, "a": 1}
+    extended = {
+        "meta": {
+            "variableCollections": {
+                "C:1": {
+                    "name": "Brand",
+                    "modes": [{"modeId": "1:0", "name": "Light"}],
+                    "variableIds": ["V:1", "V:gone"],
+                },
+                "C:2": {
+                    "name": "Brand B",
+                    "isExtension": True,
+                    "modes": [
+                        {"modeId": "2:0", "name": "B", "parentModeId": "1:0"},
+                        {"modeId": "2:1", "name": "B2", "parentModeId": "1:0"},
+                        {"modeId": "2:2", "name": "Unset"},
+                    ],
+                    "variableIds": [],
+                    "inheritedVariableIds": ["V:1"],
+                    "variableOverrides": {"V:1": {"2:0": blue}},
+                },
+            },
+            "variables": {
+                "V:1": {
+                    "id": "V:1",
+                    "name": "brand/primary",
+                    "variableCollectionId": "C:1",
+                    "resolvedType": "COLOR",
+                    "valuesByMode": {"1:0": {"r": 1, "g": 0, "b": 0, "a": 1}},
+                },
+            },
+        }
+    }
+    monkeypatch.setattr(stub, "get_variables", lambda *a: extended)
+    assert main(["variable", "list", "KEY"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "Brand (C:1) [modes: Light]",
+        "  brand/primary  COLOR  Light=#FF0000",
+        "Brand B (C:2) [modes: B, B2, Unset]",
+        "  brand/primary  COLOR  B=#0000FF  B2=#FF0000",
+    ]
+
+
 def test_variable_list_empty(stub, monkeypatch, capsys):
     monkeypatch.setattr(stub, "get_variables", lambda *a: {"meta": {}})
     assert main(["variable", "list", "KEY"]) == 0
