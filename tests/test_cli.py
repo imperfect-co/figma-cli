@@ -328,13 +328,17 @@ def test_login_interactive_prompt(flag, opened, login_stub, home, monkeypatch, c
     assert main(["auth", "login", *flag]) == 0
     assert urls == (["https://www.figma.com/settings"] if opened else [])
     err = capsys.readouterr().err
-    for scope in (
+    for needle in (
+        "FIGMA_CLIENT_ID",
+        "FIGMA_CLIENT_SECRET",
+        "https://www.figma.com/developers/apps",
+        "http://127.0.0.1:54321/callback",
         "current_user:read",
         "file_content:read",
         "file_comments:read",
         "file_comments:write",
     ):
-        assert scope in err
+        assert needle in err
     assert _stored(home) == "figd_typed\n"
 
 

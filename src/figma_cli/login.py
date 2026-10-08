@@ -24,9 +24,15 @@ from figma_cli.client import (
 )
 
 SETTINGS_URL = "https://www.figma.com/settings"
+APPS_URL = "https://www.figma.com/developers/apps"
+REDIRECT_URL = f"http://127.0.0.1:{oauth.DEFAULT_PORT}{oauth.CALLBACK_PATH}"
 SCOPES = oauth.SCOPES
 INSTRUCTIONS = f"""\
-Create a personal access token for figma-cli:
+For 1-click browser login, create an OAuth app at {APPS_URL}
+with redirect URL {REDIRECT_URL}, then export FIGMA_CLIENT_ID
+and FIGMA_CLIENT_SECRET and rerun figma auth login.
+
+Or create a personal access token for figma-cli:
   1. Open {SETTINGS_URL} and go to Security > Personal access tokens.
   2. Generate a new token with these scopes:
 {chr(10).join(f"       {scope}" for scope in SCOPES)}
