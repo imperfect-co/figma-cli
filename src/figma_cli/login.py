@@ -115,7 +115,10 @@ def login(args: argparse.Namespace) -> tuple[dict, Path]:
         prompted = prompt_app_config()
         if prompted:
             result = oauth.login(prompted, args.port, args.browser is not False)
-            oauth.save_app_config(*prompted)  # only a pair Figma accepted
+            try:
+                oauth.save_app_config(*prompted)
+            except FigmaError as err:
+                print(f"warning: could not save OAuth app: {err}", file=sys.stderr)
             return result
     token = candidate_token(args)
     me = checked_me(FigmaClient(token, api_base()))
