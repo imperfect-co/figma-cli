@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -249,8 +249,14 @@ _PAGE = """<!doctype html>
 """
 
 
-class OAuthCallbackServer(HTTPServer):
-    """Loopback server that waits for one valid ``/callback`` request."""
+class OAuthCallbackServer(ThreadingHTTPServer):
+    """Loopback server that waits for one valid ``/callback`` request.
+
+    Each connection is served on its own daemon thread, so an idle browser
+    preconnect cannot hold the polling loop (and a paste) for the read timeout.
+    """
+
+    block_on_close = False  # server_close() must not wait out an idle socket
 
     def __init__(self, port: int, state: str):
         self.state = state
@@ -388,10 +394,11 @@ def _await_code(
         server.handle_request()
         if pastes is not None and server.result is not None:
             print("\nAuthorization received via browser redirect.", file=sys.stderr)
-    if "code" not in server.result:
-        message = f"Figma returned {server.result['error']}"
+    result = server.result  # read once: a late handler thread may still write
+    if "code" not in result:
+        message = f"Figma returned {result['error']}"
         raise FigmaError({"error": "oauth_denied", "message": message})
-    return server.result["code"]
+    return result["code"]
 
 
 def login(

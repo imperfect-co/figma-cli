@@ -250,6 +250,22 @@ def test_valid_paste_wakes_the_wait_promptly():
     assert time.monotonic() - started < 2
 
 
+def test_idle_connection_does_not_delay_a_paste():
+    """A browser preconnect that never sends must not hold the poll loop."""
+    port = _free_port()
+    server = oauth._bind(port, "s")
+    idle = socket.create_connection(("127.0.0.1", port))
+    pastes = queue.SimpleQueue()
+    threading.Timer(0.3, pastes.put, ["code=c&state=s"]).start()
+    started = time.monotonic()
+    try:
+        assert oauth._await_code(server, 30, pastes) == "c"
+    finally:
+        idle.close()
+        server.server_close()
+    assert time.monotonic() - started < 2  # the handler read timeout is 10s
+
+
 def test_bad_paste_reprompts_and_loopback_keeps_listening(capsys):
     port = _free_port()
     server = oauth._bind(port, "good-state")
