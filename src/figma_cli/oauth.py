@@ -56,6 +56,7 @@ SCOPES = (
     "file_comments:read",
     "file_comments:write",
 )
+_APP_FIELDS = ("client_id", "client_secret")
 _FIELDS = ("access_token", "refresh_token", "expires_at", "client_id", "client_secret")
 
 
@@ -87,15 +88,54 @@ def authorization_url(client_id: str, port: int, state: str, challenge: str) -> 
     return f"{AUTHORIZE_URL}?{urllib.parse.urlencode(query)}"
 
 
+def app_config_path() -> Path:
+    """Where ``figma auth login`` keeps the user's own OAuth app credentials.
+
+    Separate from ``token.json``, which a personal access token login deletes.
+    """
+    return token_json_path().with_name("app.json")
+
+
+def load_app_config() -> dict[str, str]:
+    """The stored client id and secret, or {} when nothing has been saved."""
+    path = app_config_path()
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError, ValueError) as err:
+        raise FigmaError({"error": "config_unreadable", "message": str(err)}) from None
+    if not isinstance(record, dict) or not all(
+        isinstance(record.get(key, ""), str) for key in _APP_FIELDS
+    ):
+        message = f"{path} must be a JSON object with string {' and '.join(_APP_FIELDS)}"
+        raise FigmaError({"error": "config_unreadable", "message": message})
+    return {key: record[key] for key in _APP_FIELDS if key in record}
+
+
+def save_app_config(client_id: str, client_secret: str) -> Path:
+    path = app_config_path()
+    record = {"client_id": client_id, "client_secret": client_secret}
+    write_private(path, json.dumps(record, indent=2) + "\n")
+    return path
+
+
 def client_credentials(
     client_id: str | None, client_secret: str | None
 ) -> tuple[str, str] | None:
-    """Resolve the OAuth app from flags, then FIGMA_CLIENT_ID / FIGMA_CLIENT_SECRET.
+    """Resolve the OAuth app per half: flags, then FIGMA_CLIENT_ID /
+    FIGMA_CLIENT_SECRET, then ``app.json``.
 
-    Returns None when neither half is configured; a lone half is a usage error.
+    ``app.json`` is read only when a half is still missing, so a full pair from
+    flags or environment is never blocked by a bad file. Returns None when
+    neither half is configured; a lone half is a usage error.
     """
     cid = (client_id or os.environ.get("FIGMA_CLIENT_ID", "")).strip()
     secret = (client_secret or os.environ.get("FIGMA_CLIENT_SECRET", "")).strip()
+    if not (cid and secret):
+        stored = load_app_config()
+        cid = cid or stored.get("client_id", "").strip()
+        secret = secret or stored.get("client_secret", "").strip()
     if not cid and not secret:
         return None
     if not (cid and secret):
