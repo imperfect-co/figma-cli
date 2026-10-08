@@ -597,6 +597,15 @@ def test_login_prompt_saves_app_and_runs_oauth(
     assert str(path) in err
 
 
+def test_login_prompt_failed_oauth_saves_nothing(oauth_stub, home, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", FakeStdin("typed-id\n", tty=True))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: "wrong-secret")
+    payload = {"error": "oauth_failed", "message": "invalid_client"}
+    monkeypatch.setattr("figma_cli.oauth.login", _raise(payload))
+    assert main(["auth", "login", "--json"]) == 3
+    assert not _app_json(home).exists()
+
+
 @pytest.mark.parametrize("typed_id, secret", [("", "unused"), ("typed-id", " ")])
 def test_login_skipped_prompt_falls_back_to_pat(
     typed_id, secret, oauth_stub, login_stub, home, monkeypatch

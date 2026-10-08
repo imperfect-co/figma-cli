@@ -62,7 +62,7 @@ Credentials resolve in this order: `FIGMA_TOKEN`, then `~/.config/figma/token.js
 figma-cli ships no OAuth app of its own: Figma authenticates the client with its secret on every token call, and a secret embedded in an open-source package is not a secret. Bring your own:
 
 1. Create an OAuth app in the [Figma developer console](https://www.figma.com/developers/apps) and register the redirect URL `http://127.0.0.1:54321/callback`. Grant it the scopes above (`file_variables:read` only on Enterprise).
-2. Log in from an interactive terminal. With no client credentials configured, `figma auth login` asks once for the app's client id and secret (the secret is read hidden) and saves them to `~/.config/figma/app.json` (mode `0600`, directory `0700`, atomic replace), then starts the browser flow. Press Enter at either prompt to skip to a personal access token instead. To skip the prompt, export the credentials:
+2. Log in from an interactive terminal. With no client credentials configured, `figma auth login` asks for the app's client id and secret (the secret is read hidden), runs the browser flow, and once Figma accepts them saves them to `~/.config/figma/app.json` (mode `0600`, directory `0700`, atomic replace) so later logins skip the prompt. A rejected pair is not saved. Press Enter at either prompt to skip to a personal access token instead. To skip the prompt, export the credentials:
 
 ```sh
 export FIGMA_CLIENT_ID=...

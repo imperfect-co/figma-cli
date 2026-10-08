@@ -32,8 +32,8 @@ APP_INSTRUCTIONS = f"""\
 For 1-click browser login, create an OAuth app at {APPS_URL}
 with redirect URL {REDIRECT_URL} and grant these scopes:
 {SCOPE_LINES}
-Enter its client id and secret below to save them to
-{{path}} (mode 0600), or export FIGMA_CLIENT_ID and
+Enter its client id and secret below; once Figma accepts them they are saved
+to {{path}} (mode 0600). Or export FIGMA_CLIENT_ID and
 FIGMA_CLIENT_SECRET instead. Press Enter to skip and use a personal access token.
 """
 INSTRUCTIONS = f"""\
@@ -89,7 +89,7 @@ def save_token(token: str) -> Path:
 
 
 def prompt_app_config() -> tuple[str, str] | None:
-    """Offer once to save the user's OAuth app; None when either half is skipped."""
+    """Ask for the user's OAuth app; None when either half is skipped."""
     print(APP_INSTRUCTIONS.format(path=oauth.app_config_path()), file=sys.stderr)
     print("OAuth client id: ", end="", file=sys.stderr, flush=True)
     client_id = sys.stdin.readline().strip()
@@ -98,7 +98,6 @@ def prompt_app_config() -> tuple[str, str] | None:
     client_secret = getpass.getpass("OAuth client secret: ").strip()
     if not client_secret:
         return None
-    oauth.save_app_config(client_id, client_secret)
     return client_id, client_secret
 
 
@@ -111,9 +110,13 @@ def login(args: argparse.Namespace) -> tuple[dict, Path]:
     """
     if args.token is None and sys.stdin.isatty():
         client = oauth.client_credentials(args.client_id, args.client_secret)
-        client = client or prompt_app_config()
         if client:
             return oauth.login(client, args.port, args.browser is not False)
+        prompted = prompt_app_config()
+        if prompted:
+            result = oauth.login(prompted, args.port, args.browser is not False)
+            oauth.save_app_config(*prompted)  # only a pair Figma accepted
+            return result
     token = candidate_token(args)
     me = checked_me(FigmaClient(token, api_base()))
     return me, save_token(token)
