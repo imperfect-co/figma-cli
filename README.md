@@ -105,12 +105,19 @@ HTTP 429 is reported at once, never retried, so the caller decides when to try a
 
 A request carrying `X-Figma-Token` follows no redirects. Any 3xx answer is refused with `{"error": "redirect_refused"}` and exit code 3 before a second request is made, so the token never reaches another host. Exported images are downloaded from the pre-signed URLs Figma returns with a separate request that carries no token; only that request follows redirects.
 
-## Run without installing
+## Installation and quick run
 
-Before the first PyPI release, run straight from the repository with [uv](https://docs.astral.sh/uv/):
+Run on-demand without installing via [uv](https://docs.astral.sh/uv/):
 
 ```sh
-uvx --from git+https://github.com/imperfect-co/figma-cli figma-cli --help
+uvx figma-cli --help
+uvx figma-cli auth check --json
+```
+
+Or install from [PyPI](https://pypi.org/project/figma-cli/):
+
+```sh
+pip install figma-cli
 ```
 
 From a local checkout:
