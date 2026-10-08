@@ -36,7 +36,7 @@ Every command talks to the Figma REST API with either a personal access token or
 Then store it once with `figma auth login`:
 
 ```sh
-figma auth login                       # interactive: explains OAuth env vars and PAT steps, opens settings, hidden prompt
+figma auth login                       # interactive: browser OAuth if configured, else PAT steps and hidden prompt
 echo "$TOKEN" | figma auth login       # agents and CI: piped stdin
 figma auth login --token - < token.txt # same, explicit
 ```
