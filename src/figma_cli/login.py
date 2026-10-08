@@ -82,6 +82,14 @@ def save_token(token: str) -> Path:
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, path)
+            try:
+                dir_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
