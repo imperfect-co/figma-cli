@@ -122,7 +122,9 @@ class _Variables:
         """An override, else the variable's own value, else the parent mode's."""
         own = self.variables[var_id].get("valuesByMode") or {}
         override = self.overrides.get(var_id, {})
-        while mode_id:
+        seen = set()
+        while mode_id and mode_id not in seen:
+            seen.add(mode_id)
             for source in (override, own):
                 if mode_id in source:
                     return source[mode_id]

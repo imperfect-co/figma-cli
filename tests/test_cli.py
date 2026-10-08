@@ -344,6 +344,27 @@ def test_variable_list_human_extended_collection(stub, monkeypatch, capsys):
     ]
 
 
+def test_variable_list_survives_mode_cycle(stub, monkeypatch, capsys):
+    looped = {
+        "meta": {
+            "variableCollections": {
+                "C:1": {
+                    "name": "Loop",
+                    "modes": [{"modeId": "1:0", "name": "A", "parentModeId": "1:0"}],
+                    "variableIds": ["V:1"],
+                }
+            },
+            "variables": {"V:1": {"name": "gap", "resolvedType": "FLOAT"}},
+        }
+    }
+    monkeypatch.setattr(stub, "get_variables", lambda *a: looped)
+    assert main(["variable", "list", "KEY"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "Loop (C:1) [modes: A]",
+        "  gap  FLOAT",
+    ]
+
+
 def test_variable_list_empty(stub, monkeypatch, capsys):
     monkeypatch.setattr(stub, "get_variables", lambda *a: {"meta": {}})
     assert main(["variable", "list", "KEY"]) == 0
