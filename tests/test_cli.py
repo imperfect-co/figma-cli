@@ -88,6 +88,53 @@ def test_module_execution(flag):
 # Subcommands: a stub client stands in for the network.
 
 
+VARIABLES = {
+    "status": 200,
+    "error": False,
+    "meta": {
+        "variableCollections": {
+            "VariableCollectionId:1:1": {
+                "id": "VariableCollectionId:1:1",
+                "name": "Colors",
+                "modes": [
+                    {"modeId": "1:0", "name": "Light"},
+                    {"modeId": "1:1", "name": "Dark"},
+                ],
+            }
+        },
+        "variables": {
+            "VariableID:1:2": {
+                "id": "VariableID:1:2",
+                "name": "brand/primary",
+                "variableCollectionId": "VariableCollectionId:1:1",
+                "resolvedType": "COLOR",
+                "valuesByMode": {
+                    "1:0": {"r": 1, "g": 0, "b": 0, "a": 1},
+                    "1:1": {"r": 0, "g": 0, "b": 0, "a": 0.5},
+                },
+            },
+            "VariableID:1:3": {
+                "id": "VariableID:1:3",
+                "name": "text/default",
+                "variableCollectionId": "VariableCollectionId:1:1",
+                "resolvedType": "COLOR",
+                "valuesByMode": {
+                    "1:0": {"type": "VARIABLE_ALIAS", "id": "VariableID:1:2"},
+                    "1:1": {"type": "VARIABLE_ALIAS", "id": "VariableID:9:9"},
+                },
+            },
+            "VariableID:1:4": {
+                "id": "VariableID:1:4",
+                "name": "radius",
+                "variableCollectionId": "VariableCollectionId:1:1",
+                "resolvedType": "FLOAT",
+                "valuesByMode": {"1:0": 4, "1:1": 8},
+            },
+        },
+    },
+}
+
+
 class StubClient:
     def __init__(self):
         self.calls = []
@@ -101,6 +148,20 @@ class StubClient:
         child = {"id": "0:1", "name": "Page 1", "type": "CANVAS"}
         doc = {"id": "0:0", "name": "Document", "type": "DOCUMENT", "children": [child]}
         return {"name": "Spec", "lastModified": "2026-01-01", "document": doc}
+
+    def get_nodes(self, file_key, node_ids, depth=None, geometry=None):
+        self.calls.append(("get_nodes", file_key, node_ids, depth, geometry))
+        frame = {"id": "1:2", "name": "Card", "type": "FRAME"}
+        frame["children"] = [{"id": "1:3", "name": "Title", "type": "TEXT"}]
+        return {
+            "name": "Spec",
+            "lastModified": "2026-01-01",
+            "nodes": {"1:2": {"document": frame}, "9:9": None},
+        }
+
+    def get_variables(self, file_key, published=False):
+        self.calls.append(("get_variables", file_key, published))
+        return VARIABLES
 
     def list_comments(self, file_key):
         self.calls.append(("list_comments", file_key))
@@ -165,6 +226,86 @@ def test_file_get_rejects_bad_depth(depth, capsys):
     assert exc.value.code == 2
 
 
+def test_node_get_maps_flags(stub, capsys):
+    argv = ["node", "get", "KEY", "--nodes", "1:2, 9:9", "--depth", "2"]
+    assert main([*argv, "--geometry", "paths", "--json"]) == 0
+    assert stub.calls == [("get_nodes", "KEY", ["1:2", "9:9"], 2, "paths")]
+    out = json.loads(capsys.readouterr().out)
+    assert out["nodes"]["1:2"]["document"]["id"] == "1:2"
+    assert out["nodes"]["9:9"] is None
+
+
+def test_node_get_human_reports_missing_node(stub, capsys):
+    assert main(["node", "get", "KEY", "--nodes", "1:2,9:9"]) == 0
+    assert stub.calls == [("get_nodes", "KEY", ["1:2", "9:9"], None, None)]
+    assert capsys.readouterr().out.splitlines() == [
+        "Spec (last modified 2026-01-01)",
+        "FRAME Card (1:2)",
+        "  TEXT Title (1:3)",
+        "Node 9:9: not found",
+    ]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        [],
+        ["--nodes", ""],
+        ["--nodes", " , "],
+        ["--nodes", "1:2", "--depth", "0"],
+        ["--nodes", "1:2", "--depth", "two"],
+        ["--nodes", "1:2", "--geometry", "bounds"],
+    ],
+)
+def test_node_get_usage_errors(extra, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["node", "get", "KEY", *extra])
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("published", [False, True])
+def test_variable_list_json(published, stub, capsys):
+    argv = ["variable", "list", "KEY", "--json"]
+    assert main(argv + ["--published"] * published) == 0
+    assert stub.calls == [("get_variables", "KEY", published)]
+    assert json.loads(capsys.readouterr().out) == VARIABLES
+
+
+def test_variable_list_human(stub, capsys):
+    assert main(["variable", "list", "KEY"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "Colors (VariableCollectionId:1:1) [modes: Light, Dark]",
+        "  brand/primary  COLOR  Light=#FF0000  Dark=#00000080",
+        "  text/default  COLOR  Light=-> brand/primary  Dark=-> VariableID:9:9",
+        "  radius  FLOAT  Light=4  Dark=8",
+    ]
+
+
+def test_variable_list_human_published_shape(stub, monkeypatch, capsys):
+    published = {
+        "meta": {
+            "variableCollections": {"C:1": {"id": "C:1", "name": "Tokens"}},
+            "variables": {
+                "V:1": {
+                    "id": "V:1",
+                    "name": "gap",
+                    "variableCollectionId": "C:1",
+                    "resolvedDataType": "FLOAT",
+                },
+            },
+        }
+    }
+    monkeypatch.setattr(stub, "get_variables", lambda *a: published)
+    assert main(["variable", "list", "KEY", "--published"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["Tokens (C:1)", "  gap  FLOAT"]
+
+
+def test_variable_list_empty(stub, monkeypatch, capsys):
+    monkeypatch.setattr(stub, "get_variables", lambda *a: {"meta": {}})
+    assert main(["variable", "list", "KEY"]) == 0
+    assert capsys.readouterr().out == "No variables.\n"
+
+
 def test_comment_list(stub, capsys):
     assert main(["comment", "list", "KEY"]) == 0
     lines = capsys.readouterr().out.splitlines()
@@ -216,7 +357,7 @@ def test_help_lists_subcommands(capsys):
     with pytest.raises(SystemExit):
         main(["--help"])
     out = capsys.readouterr().out
-    for name in ("auth", "file", "export", "comment"):
+    for name in ("auth", "file", "node", "variable", "export", "comment"):
         assert name in out
 
 

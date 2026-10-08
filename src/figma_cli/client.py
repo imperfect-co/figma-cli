@@ -262,6 +262,25 @@ class FigmaClient:
         query = {"depth": depth} if depth is not None else None
         return self.request("GET", f"/v1/files/{_quote(file_key)}", query)
 
+    def get_nodes(
+        self,
+        file_key: str,
+        node_ids: list[str],
+        depth: int | None = None,
+        geometry: str | None = None,
+    ) -> dict[str, Any]:
+        query: dict[str, Any] = {"ids": ",".join(node_ids)}
+        if depth is not None:
+            query["depth"] = depth
+        if geometry:
+            query["geometry"] = geometry
+        return self.request("GET", f"/v1/files/{_quote(file_key)}/nodes", query)
+
+    def get_variables(self, file_key: str, published: bool = False) -> dict[str, Any]:
+        """Enterprise only: other plans (or a token without file_variables:read) 403."""
+        scope = "published" if published else "local"
+        return self.request("GET", f"/v1/files/{_quote(file_key)}/variables/{scope}")
+
     def get_images(
         self, file_key: str, node_ids: list[str], fmt: str
     ) -> dict[str, str | None]:

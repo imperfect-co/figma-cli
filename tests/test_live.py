@@ -1,8 +1,11 @@
-"""Live Figma API checks. Skipped unless FIGMA_TOKEN is set; the file, export and
-comment checks also need FIGMA_TEST_FILE_KEY.
+"""Live Figma API checks. Skipped unless FIGMA_TOKEN is set; the file, export,
+comment, node and variable checks also need FIGMA_TEST_FILE_KEY.
 
-FIGMA_TEST_NODE_ID (optional) names a frame to export. The comment test posts one
-comment and deletes it again.
+FIGMA_TEST_NODE_ID (optional) names a frame to export and to fetch with node get.
+The comment test posts one comment and deletes it again.
+
+The variables endpoints are Enterprise only, so the variable check accepts either
+the collections or a structured 403.
 
 The OAuth check needs FIGMA_OAUTH_REFRESH_TOKEN, FIGMA_CLIENT_ID and
 FIGMA_CLIENT_SECRET. Each refresh invalidates the user's previous access token for
@@ -89,6 +92,30 @@ def test_export_png(tmp_path, capsys):
     assert code == 0, out
     with open(out["files"][0]["path"], "rb") as fh:
         assert fh.read(4) == b"\x89PNG"
+
+
+@needs_file
+@pytest.mark.skipif(not NODE_ID, reason="FIGMA_TEST_NODE_ID not set")
+def test_node_get_live(capsys):
+    start = time.monotonic()
+    code, out = _run(capsys, "node", "get", FILE_KEY, "--nodes", NODE_ID)
+    elapsed = time.monotonic() - start
+    assert code == 0, out
+    assert out["nodes"][NODE_ID]["document"]["id"] == NODE_ID
+    assert elapsed < 2
+    code, whole = _run(capsys, "file", "get", FILE_KEY)
+    assert code == 0, whole
+    assert len(json.dumps(out)) < len(json.dumps(whole))
+
+
+@needs_file
+def test_variable_list_live(capsys):
+    """Enterprise tokens list collections; any other plan (or scope) gets a 403."""
+    code, out = _run(capsys, "variable", "list", FILE_KEY)
+    if code == 0:
+        assert isinstance(out["meta"]["variableCollections"], dict)
+    else:
+        assert (code, out["error"], out["status"]) == (3, "forbidden", 403), out
 
 
 @needs_file

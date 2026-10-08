@@ -57,6 +57,59 @@ def _file_get(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
     return data, "\n".join([header, *tree])
 
 
+def _node_get(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
+    data = client.get_nodes(args.file_key, args.nodes, args.depth, args.geometry)
+    nodes = data.get("nodes") or {}
+    lines = [f"{data.get('name', '')} (last modified {data.get('lastModified', '?')})"]
+    for node_id in args.nodes:
+        document = (nodes.get(node_id) or {}).get("document")
+        if document:
+            lines.extend(_tree_lines(document))
+        else:
+            lines.append(f"Node {node_id}: not found")
+    return data, "\n".join(lines)
+
+
+def _format_value(value: Any, names: dict[str, str]) -> str:
+    if isinstance(value, dict) and value.get("type") == "VARIABLE_ALIAS":
+        return "-> " + names.get(value.get("id", ""), str(value.get("id")))
+    if isinstance(value, dict) and {"r", "g", "b"} <= value.keys():
+        channels = [value["r"], value["g"], value["b"]]
+        if value.get("a", 1) != 1:
+            channels.append(value["a"])
+        return "#" + "".join(f"{round(c * 255):02X}" for c in channels)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _variable_line(
+    var: dict[str, Any], modes: dict[str, str], names: dict[str, str]
+) -> str:
+    kind = var.get("resolvedType") or var.get("resolvedDataType") or "?"
+    values = [
+        f"{modes.get(mode_id, mode_id)}={_format_value(value, names)}"
+        for mode_id, value in (var.get("valuesByMode") or {}).items()
+    ]
+    return "  " + "  ".join([var.get("name", ""), kind, *values])
+
+
+def _variable_list(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
+    data = client.get_variables(args.file_key, args.published)
+    meta = data.get("meta") or {}
+    variables = list((meta.get("variables") or {}).values())
+    names = {v.get("id", ""): v.get("name", "") for v in variables}
+    lines = []
+    for coll_id, coll in (meta.get("variableCollections") or {}).items():
+        modes = {m.get("modeId"): m.get("name") for m in coll.get("modes") or []}
+        mode_text = f" [modes: {', '.join(modes.values())}]" if modes else ""
+        lines.append(f"{coll.get('name', '')} ({coll_id}){mode_text}")
+        lines.extend(
+            _variable_line(v, modes, names)
+            for v in variables
+            if v.get("variableCollectionId") == coll_id
+        )
+    return data, "\n".join(lines) or "No variables."
+
+
 def _safe_name(node_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "-", node_id)
 
@@ -210,6 +263,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("file_key")
     p.add_argument("--depth", type=_positive_int, help="server-side tree depth")
     p.set_defaults(handler=_file_get)
+
+    node = commands.add_parser("node", help="node inspection")
+    node_cmds = node.add_subparsers(dest="action", metavar="<action>", required=True)
+    p = node_cmds.add_parser("get", parents=[common], help="fetch node subtrees")
+    p.add_argument("file_key")
+    p.add_argument(
+        "--nodes", required=True, type=_node_list, help="comma-separated node ids"
+    )
+    p.add_argument("--depth", type=_positive_int, help="server-side subtree depth")
+    p.add_argument("--geometry", choices=("paths",), help="include vector path data")
+    p.set_defaults(handler=_node_get)
+
+    variable = commands.add_parser(
+        "variable", help="design variables (Figma Enterprise only)"
+    )
+    variable_cmds = variable.add_subparsers(
+        dest="action", metavar="<action>", required=True
+    )
+    p = variable_cmds.add_parser(
+        "list", parents=[common], help="list variable collections and values"
+    )
+    p.add_argument("file_key")
+    p.add_argument(
+        "--published",
+        action="store_true",
+        help="list variables published from this file instead of local ones",
+    )
+    p.set_defaults(handler=_variable_list)
 
     p = commands.add_parser("export", parents=[common], help="render nodes to files")
     p.add_argument("file_key")
