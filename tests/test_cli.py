@@ -19,9 +19,13 @@ ROOT = Path(__file__).resolve().parent.parent
 ALIASES = ("figma-cli", "figma")
 
 
-def _scripts() -> dict[str, str]:
+def _project() -> dict:
     with (ROOT / "pyproject.toml").open("rb") as fh:
-        return tomllib.load(fh)["project"]["scripts"]
+        return tomllib.load(fh)["project"]
+
+
+def _scripts() -> dict[str, str]:
+    return _project()["scripts"]
 
 
 def _resolve(target: str):
@@ -379,3 +383,12 @@ def test_login_rejected_pat_keeps_oauth_tokens(login_stub, home, monkeypatch, ca
     monkeypatch.setattr(sys, "stdin", FakeStdin("figd_bad"))
     assert main(["auth", "login", "--json"]) == 3
     assert oauth_file.read_text() == '{"access_token": "figu_kept"}'
+
+
+def test_docs_extra_declared():
+    assert _project()["optional-dependencies"]["docs"] == ["zensical>=0.0.68,<0.1"]
+
+
+def test_documentation_url_declared():
+    urls = _project()["urls"]
+    assert urls["Documentation"] == "https://figma-cli.readthedocs.io/"
