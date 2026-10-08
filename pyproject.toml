@@ -25,6 +25,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "build", "twine>=6.1.0"]
+docs = ["zensical>=0.0.68,<0.1"]
 
 [project.scripts]
 figma-cli = "figma_cli.cli:main"
@@ -33,6 +34,7 @@ figma = "figma_cli.cli:main"
 [project.urls]
 Homepage = "https://github.com/imperfect-co/figma-cli"
 Issues = "https://github.com/imperfect-co/figma-cli/issues"
+Documentation = "https://figma-cli.readthedocs.io/"
 
 [tool.hatch.version]
 path = "src/figma_cli/__init__.py"
