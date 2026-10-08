@@ -205,6 +205,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 ruff check .
 ruff format --check .
+ty check src
 pytest tests/
 ```
 

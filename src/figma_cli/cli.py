@@ -167,7 +167,8 @@ def _safe_name(node_id: str) -> str:
 def _export(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
     node_ids = args.nodes
     images = client.get_images(args.file_key, node_ids, args.format)
-    missing = [n for n in node_ids if not images.get(n)]
+    urls = {n: url for n in node_ids if (url := images.get(n))}
+    missing = [n for n in node_ids if n not in urls]
     if missing:
         raise FigmaError(
             {
@@ -177,9 +178,9 @@ def _export(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
             }
         )
     out_dir = Path(args.output)
-    files = []
+    files: list[dict[str, Any]] = []
     for node_id in node_ids:
-        payload = download(images[node_id])
+        payload = download(urls[node_id])
         path = (
             out_dir / f"{_safe_name(args.file_key)}_{_safe_name(node_id)}.{args.format}"
         )

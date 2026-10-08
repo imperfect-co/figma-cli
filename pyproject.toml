@@ -24,7 +24,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "build", "twine>=6.1.0"]
+dev = ["pytest", "ruff", "ty==0.0.85", "build", "twine>=6.1.0"]
 
 [project.scripts]
 figma-cli = "figma_cli.cli:main"
@@ -33,6 +33,9 @@ figma = "figma_cli.cli:main"
 [project.urls]
 Homepage = "https://github.com/imperfect-co/figma-cli"
 Issues = "https://github.com/imperfect-co/figma-cli/issues"
+
+[tool.ty.environment]
+python-version = "3.11"
 
 [tool.hatch.version]
 path = "src/figma_cli/__init__.py"
