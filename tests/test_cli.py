@@ -356,3 +356,26 @@ def test_login_malformed_token_exits_two(token, login_stub, home, monkeypatch, c
     assert json.loads(capsys.readouterr().out)["error"] == "invalid_token"
     assert login_stub == []
     assert not (home / ".config").exists()
+
+
+@pytest.mark.parametrize("argv", [["--token", "figd_new"], []])
+def test_login_pat_removes_oauth_tokens(argv, login_stub, home, monkeypatch, capsys):
+    """token.json outranks the PAT file, so saving a PAT must remove it."""
+    oauth_file = home / ".config" / "figma" / "token.json"
+    oauth_file.parent.mkdir(parents=True)
+    oauth_file.write_text('{"access_token": "figu_stale"}')
+    monkeypatch.setattr(sys, "stdin", FakeStdin("figd_new\n"))
+    assert main(["auth", "login", *argv]) == 0
+    assert not oauth_file.exists()
+    assert _stored(home) == "figd_new\n"
+
+
+def test_login_rejected_pat_keeps_oauth_tokens(login_stub, home, monkeypatch, capsys):
+    oauth_file = home / ".config" / "figma" / "token.json"
+    oauth_file.parent.mkdir(parents=True)
+    oauth_file.write_text('{"access_token": "figu_kept"}')
+    payload = {"error": "forbidden", "status": 403, "message": "Invalid token"}
+    monkeypatch.setattr(StubClient, "me", _raise(payload))
+    monkeypatch.setattr(sys, "stdin", FakeStdin("figd_bad"))
+    assert main(["auth", "login", "--json"]) == 3
+    assert oauth_file.read_text() == '{"access_token": "figu_kept"}'

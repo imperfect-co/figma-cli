@@ -161,24 +161,30 @@ def save_oauth_token(record: dict[str, Any]) -> Path:
     return path
 
 
+def _well_formed(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    expires_at = record.get("expires_at")
+    if isinstance(expires_at, bool) or not isinstance(expires_at, int | float):
+        return False
+    strings = (record.get(k) for k in _FIELDS if k != "expires_at")
+    return all(isinstance(v, str) and v for v in strings)
+
+
 def load_oauth_token() -> dict[str, Any]:
     path = token_json_path()
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError) as err:
         raise FigmaError({"error": "token_unreadable", "message": str(err)}) from None
-    if not isinstance(record, dict) or any(not record.get(k) for k in _FIELDS):
+    if not _well_formed(record):
         message = f"{path} is missing one of {', '.join(_FIELDS)}"
         raise FigmaError({"error": "token_unreadable", "message": message})
     return record
 
 
 def _expired(record: dict[str, Any]) -> bool:
-    try:
-        expires_at = float(record["expires_at"])
-    except (TypeError, ValueError):
-        return True
-    return expires_at <= time.time() + EXPIRY_MARGIN_SECONDS
+    return record["expires_at"] <= time.time() + EXPIRY_MARGIN_SECONDS
 
 
 @contextmanager

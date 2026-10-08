@@ -165,6 +165,7 @@ def test_download_rejects_non_http_scheme():
 class Recorder:
     def __init__(self):
         self.requests: list[tuple[str, str, dict[str, str]]] = []
+        self.bodies: list[bytes] = []
         self.routes: dict[str, tuple[int, dict[str, str], bytes]] = {}
 
 
@@ -175,6 +176,8 @@ def serve() -> Iterator[tuple[str, Recorder]]:
     class Handler(BaseHTTPRequestHandler):
         def _answer(self):
             rec.requests.append((self.command, self.path, dict(self.headers)))
+            length = int(self.headers.get("Content-Length") or 0)
+            rec.bodies.append(self.rfile.read(length))
             status, headers, body = rec.routes.get(
                 self.path.split("?")[0], (404, {}, b"{}")
             )
@@ -384,7 +387,7 @@ def test_login_failed_write_keeps_old_token(home, monkeypatch, capsys):
     def fail(*args):
         raise OSError("disk full")
 
-    monkeypatch.setattr("figma_cli.login.os.replace", fail)
+    monkeypatch.setattr("figma_cli.client.os.replace", fail)
     with serve() as (api, rec):
         rec.routes["/v1/me"] = (200, {}, json.dumps(ME).encode())
         assert _login(monkeypatch, api, TOKEN) == 3
