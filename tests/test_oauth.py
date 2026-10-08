@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import os
+import queue
 import socket
 import stat
 import sys
@@ -191,6 +192,159 @@ def test_callback_timeout():
     finally:
         server.server_close()
     assert exc.value.payload["error"] == "oauth_timeout"
+
+
+# Pasting the callback into the terminal, for a browser on another machine.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "http://127.0.0.1:54321/callback?code=c&state=s",
+        "  http://localhost:54321/callback?state=s&code=c\n",
+        "code=c&state=s",
+        "?code=c&state=s",
+    ],
+)
+def test_paste_accepts_callback_url_or_query(text):
+    assert oauth.parse_pasted_callback(text, "s", 54321) == {"code": "c"}
+
+
+def test_paste_carries_a_denial_through():
+    text = "error=access_denied&state=s"
+    assert oauth.parse_pasted_callback(text, "s", 54321) == {"error": "access_denied"}
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("c", "no state"),
+        ("code=c", "no state"),
+        ("code=c&state=forged", "does not match"),
+        ("state=s", "no code"),
+        ("http://127.0.0.1:54321/elsewhere?code=c&state=s", "expected a URL"),
+        ("http://127.0.0.1:9999/callback?code=c&state=s", "expected a URL"),
+        ("http://127.0.0.1:bad/callback?code=c&state=s", "expected a URL"),
+        ("https://127.0.0.1:54321/callback?code=c&state=s", "expected a URL"),
+        ("http://evil.example:54321/callback?code=c&state=s", "expected a URL"),
+    ],
+)
+def test_paste_rejects_what_the_loopback_handler_would(text, reason):
+    with pytest.raises(ValueError, match=reason):
+        oauth.parse_pasted_callback(text, "s", 54321)
+
+
+def test_valid_paste_wakes_the_wait_promptly():
+    port = _free_port()
+    server = oauth._bind(port, "s")
+    pastes = queue.SimpleQueue()
+    timer = threading.Timer(
+        0.2, pastes.put, [f"{oauth.redirect_uri(port)}?code=c&state=s\n"]
+    )
+    timer.start()
+    started = time.monotonic()
+    try:
+        assert oauth._await_code(server, 30, pastes) == "c"
+    finally:
+        server.server_close()
+    assert time.monotonic() - started < 2
+
+
+def test_bad_paste_reprompts_and_loopback_keeps_listening(capsys):
+    port = _free_port()
+    server = oauth._bind(port, "good-state")
+    pastes = queue.SimpleQueue()
+    pastes.put("code=forged&state=bad-state\n")
+    answers = []
+
+    def browser():
+        time.sleep(0.8)  # after the bad paste has been read and rejected
+        answers.append(_callback(port, code="real", state="good-state"))
+
+    thread = threading.Thread(target=browser)
+    thread.start()
+    try:
+        assert oauth._await_code(server, 10, pastes) == "real"
+    finally:
+        thread.join()
+        server.server_close()
+    assert [status for status, _ in answers] == [200]
+    err = capsys.readouterr().err
+    assert "does not match this login attempt" in err
+    assert err.count(oauth.PASTE_PROMPT) == 1
+    assert "Authorization received via browser redirect." in err
+
+
+@pytest.mark.parametrize("text", ["", "\n\n  \n"])
+def test_eof_or_blank_stdin_stops_the_reader_and_keeps_waiting(text):
+    pastes = queue.SimpleQueue()
+    reader = threading.Thread(
+        target=oauth._read_pastes, args=(io.StringIO(text), pastes)
+    )
+    reader.start()
+    reader.join(timeout=1)
+    assert not reader.is_alive()
+    assert pastes.empty()
+    server = oauth._bind(_free_port(), "s")
+    try:
+        with pytest.raises(FigmaError) as exc:
+            oauth._await_code(server, 0.3, pastes)
+    finally:
+        server.server_close()
+    assert exc.value.payload["error"] == "oauth_timeout"
+
+
+class PasteStdin:
+    """A terminal stdin whose one line is the paste, released once it is known."""
+
+    def __init__(self):
+        self.lines = queue.SimpleQueue()
+
+    def isatty(self):
+        return True
+
+    def readline(self):
+        return self.lines.get()
+
+
+def test_oauth_login_completes_from_a_pasted_callback(home, monkeypatch, capsys):
+    """--no-browser over SSH: the redirect never arrives, the paste does."""
+    port = _free_port()
+    stdin = PasteStdin()
+    real_url = oauth.authorization_url
+
+    def authorization_url(client_id, port, state, challenge):
+        stdin.lines.put("code=wrong&state=forged\n")
+        stdin.lines.put(f"{oauth.redirect_uri(port)}?code=pasted&state={state}\n")
+        stdin.lines.put("")  # then EOF
+        return real_url(client_id, port, state, challenge)
+
+    opened = []
+    monkeypatch.setattr(oauth, "authorization_url", authorization_url)
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.delenv("FIGMA_TOKEN", raising=False)
+    monkeypatch.setenv("FIGMA_CLIENT_ID", CLIENT[0])
+    monkeypatch.setenv("FIGMA_CLIENT_SECRET", CLIENT[1])
+    tokens = {"access_token": "figu_new", "refresh_token": "r-new", "expires_in": 90}
+    with serve() as (api, rec):
+        rec.routes["/v1/oauth/token"] = (200, {}, json.dumps(tokens).encode())
+        rec.routes["/v1/me"] = (200, {}, json.dumps(ME).encode())
+        monkeypatch.setenv("FIGMA_API_BASE", api)
+        started = time.monotonic()
+        code = main(["auth", "login", "--no-browser", "--port", str(port), "--json"])
+        elapsed = time.monotonic() - started
+
+    captured = capsys.readouterr()
+    assert code == 0, captured
+    assert elapsed < 2
+    assert opened == []
+    assert [p for _, p, _ in rec.requests] == ["/v1/oauth/token", "/v1/me"]
+    assert _form(rec.bodies[0])["code"] == "pasted"
+    stored = json.loads((_figma_dir(home) / "token.json").read_text())
+    assert stored["access_token"] == "figu_new"
+    assert captured.err.count(oauth.PASTE_PROMPT) == 2
+    assert "does not match this login attempt" in captured.err
 
 
 # The full `figma auth login` browser flow.

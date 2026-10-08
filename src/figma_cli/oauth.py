@@ -350,14 +350,15 @@ def _start_paste_reader(stream) -> queue.SimpleQueue:
 
 
 def _take_paste(server: OAuthCallbackServer, pastes: queue.SimpleQueue) -> None:
-    """Drain queued pastes into ``server.result``; explain and re-prompt on a bad one."""
+    """Move queued pastes into ``server.result``; re-prompt on a rejected one."""
     while server.result is None:
         try:
             line = pastes.get_nowait()
         except queue.Empty:
             return
         try:
-            server.result = parse_pasted_callback(line, server.state, server.server_port)
+            port = server.server_port
+            server.result = parse_pasted_callback(line, server.state, port)
         except ValueError as err:
             print(f"Not accepted: {err}.", file=sys.stderr)
             print(PASTE_PROMPT, end="", file=sys.stderr, flush=True)
