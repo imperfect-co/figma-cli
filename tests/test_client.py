@@ -225,6 +225,92 @@ def test_token_request_refuses_redirect(status, monkeypatch, capsys):
         assert other_rec.requests == []
 
 
+def test_get_nodes_query_string(monkeypatch):
+    with serve() as (api, rec):
+        rec.routes["/v1/files/FILE/nodes"] = (200, {}, b'{"nodes": {}}')
+        client = FigmaClient(TOKEN, api)
+
+        assert client.get_nodes("FILE", ["1:2", "3:4"], depth=2, geometry="paths") == {
+            "nodes": {}
+        }
+        client.get_nodes("FILE", ["1:2"])
+
+        paths = [r[1] for r in rec.requests]
+        assert paths == [
+            "/v1/files/FILE/nodes?ids=1%3A2%2C3%3A4&depth=2&geometry=paths",
+            "/v1/files/FILE/nodes?ids=1%3A2",
+        ]
+        assert all(_has_token(r[2]) for r in rec.requests)
+
+
+@pytest.mark.parametrize(
+    ("published", "path"),
+    [
+        (False, "/v1/files/FILE/variables/local"),
+        (True, "/v1/files/FILE/variables/published"),
+    ],
+)
+def test_get_variables_path(published, path):
+    with serve() as (api, rec):
+        rec.routes[path] = (200, {}, b'{"meta": {"variables": {}}}')
+        client = FigmaClient(TOKEN, api)
+
+        assert client.get_variables("FILE", published=published) == {
+            "meta": {"variables": {}}
+        }
+        assert [(r[0], r[1]) for r in rec.requests] == [("GET", path)]
+        assert _has_token(rec.requests[0][2])
+
+
+@pytest.mark.parametrize(
+    ("argv", "path"),
+    [
+        (["node", "get", "KEY", "--nodes", "1:2"], "/v1/files/KEY/nodes"),
+        (["variable", "list", "KEY"], "/v1/files/KEY/variables/local"),
+        (
+            ["variable", "list", "KEY", "--published"],
+            "/v1/files/KEY/variables/published",
+        ),
+    ],
+)
+def test_inspection_endpoints_refuse_redirect(argv, path, monkeypatch, capsys):
+    with serve() as (api, api_rec), serve() as (other, other_rec):
+        api_rec.routes[path] = (302, {"Location": f"{other}{path}"}, b"")
+        monkeypatch.setenv("FIGMA_API_BASE", api)
+        monkeypatch.setenv("FIGMA_TOKEN", TOKEN)
+
+        code = main([*argv, "--json"])
+
+        assert code == 3
+        out = json.loads(capsys.readouterr().out)
+        assert out == {
+            "error": "redirect_refused",
+            "status": 302,
+            "message": "refusing to follow a redirect on a token-bearing request",
+        }
+        assert len(api_rec.requests) == 1
+        assert api_rec.requests[0][1].split("?")[0] == path
+        assert other_rec.requests == []
+
+
+def test_variable_list_forbidden_is_structured(monkeypatch, capsys):
+    with serve() as (api, rec):
+        body = b'{"status": 403, "error": true, "message": "Limited by Figma plan"}'
+        rec.routes["/v1/files/KEY/variables/local"] = (403, {}, body)
+        monkeypatch.setenv("FIGMA_API_BASE", api)
+        monkeypatch.setenv("FIGMA_TOKEN", TOKEN)
+
+        code = main(["variable", "list", "KEY", "--json"])
+
+        assert code == 3
+        assert json.loads(capsys.readouterr().out) == {
+            "error": "forbidden",
+            "status": 403,
+            "message": "Limited by Figma plan",
+        }
+        assert len(rec.requests) == 1
+
+
 def test_export_downloads_asset_without_token(monkeypatch, tmp_path, capsys):
     with serve() as (api, api_rec), serve() as (cdn, cdn_rec):
         images = {"images": {"1:2": f"{cdn}/hop/1-2.png"}, "err": None}
