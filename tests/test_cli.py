@@ -440,6 +440,23 @@ def test_error_json_on_stdout(stub, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == payload
 
 
+def test_export_unrendered_node_raises_render_failed(
+    stub, monkeypatch, tmp_path, capsys
+):
+    images = {"1:2": "https://example.com/a.png", "3:4": None, "5:6": ""}
+    monkeypatch.setattr(stub, "get_images", lambda *a: images, raising=False)
+    monkeypatch.setattr("figma_cli.cli.download", _raise({"error": "unexpected"}))
+    out_dir = tmp_path / "out"
+    argv = ["export", "KEY", "--nodes", "1:2,3:4,5:6", "--output", str(out_dir)]
+    assert main([*argv, "--json"]) == 3
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "render_failed",
+        "message": "no image URL returned",
+        "nodes": ["3:4", "5:6"],
+    }
+    assert not out_dir.exists()
+
+
 def test_error_human_on_stderr(stub, monkeypatch, capsys):
     payload = {"error": "forbidden", "status": 403, "message": "Invalid token"}
     monkeypatch.setattr(stub, "me", _raise(payload))
