@@ -2,14 +2,21 @@
 
 Two transport rules hold for every request:
 
-* A request carrying ``X-Figma-Token`` follows zero redirects. Any 3xx answer is
-  refused before a second request is made, so the token never reaches another host.
+* A request carrying a credential (``X-Figma-Token`` for a personal access token,
+  ``Authorization: Bearer`` for an OAuth token, ``Authorization: Basic`` for OAuth
+  client credentials) follows zero redirects. Any 3xx answer is refused before a
+  second request is made, so the credential never reaches another host.
 * Rendered assets are fetched from their pre-signed URLs without the token.
+
+Credentials resolve in this order: ``FIGMA_TOKEN``, then the OAuth tokens in
+``~/.config/figma/token.json`` (refreshed when expired), then the personal access
+token in ``~/.config/figma/token``.
 """
 
 import email.utils
 import json
 import os
+import secrets
 import time
 import urllib.error
 import urllib.parse
@@ -19,6 +26,7 @@ from typing import Any
 
 DEFAULT_API_BASE = "https://api.figma.com"
 TOKEN_HEADER = "X-Figma-Token"
+OAUTH_TOKEN_PREFIX = "figu_"
 TIMEOUT_SECONDS = 60
 EXIT_USAGE = 2
 EXIT_API_ERROR = 3
@@ -40,6 +48,15 @@ class FigmaError(Exception):
     def __init__(self, payload: dict[str, Any]):
         super().__init__(payload.get("message") or payload["error"])
         self.payload = payload
+
+
+class UsageError(FigmaError):
+    """A local usage problem (bad input, busy port): exit 2."""
+
+    exit_code = EXIT_USAGE
+
+    def __init__(self, error: str, message: str):
+        super().__init__({"error": error, "message": message})
 
 
 class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
@@ -96,8 +113,55 @@ def _network_error(err: OSError) -> FigmaError:
 
 
 def token_path() -> Path:
-    """Where ``figma auth login`` stores the token: ``~/.config/figma/token``."""
+    """Where ``figma auth login`` stores a personal access token."""
     return Path.home() / ".config" / "figma" / "token"
+
+
+def token_json_path() -> Path:
+    """Where ``figma auth login`` stores OAuth tokens and client credentials."""
+    return token_path().with_name("token.json")
+
+
+def is_oauth_token(token: str) -> bool:
+    """True for a Figma OAuth access token, which travels as a Bearer token."""
+    return token.startswith(OAUTH_TOKEN_PREFIX)
+
+
+def write_private(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` at mode 0600, replacing it only once written.
+
+    The new file is created 0600 under a fresh name (O_EXCL, so never through a
+    planted file or symlink), then renamed over the old one: a failed write
+    leaves the previous file intact, and nothing is ever readable by others.
+    """
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}")
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path.parent.chmod(0o700)  # refuses a directory owned by someone else
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+            _fsync_dir(path.parent)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+    except OSError as err:
+        raise FigmaError({"error": "write_failed", "message": str(err)}) from None
+
+
+def _fsync_dir(directory: Path) -> None:
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        pass
 
 
 def read_token_file() -> str:
@@ -127,16 +191,25 @@ class FigmaClient:
         token: str,
         base_url: str = DEFAULT_API_BASE,
         timeout: float = TIMEOUT_SECONDS,
+        bearer: bool | None = None,
     ):
         self.token = token
+        self.bearer = is_oauth_token(token) if bearer is None else bearer
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._opener = urllib.request.build_opener(_RefuseRedirects)
 
     @classmethod
     def from_env(cls) -> "FigmaClient":
-        """Read FIGMA_TOKEN, falling back to the stored token file."""
-        token = os.environ.get("FIGMA_TOKEN", "").strip() or read_token_file()
+        """Resolve FIGMA_TOKEN, then stored OAuth tokens, then the stored PAT."""
+        token = os.environ.get("FIGMA_TOKEN", "").strip()
+        if token:
+            return cls(token, api_base())
+        if token_json_path().exists():
+            from figma_cli.oauth import fresh_access_token
+
+            return cls(fresh_access_token(), api_base(), bearer=True)
+        token = read_token_file()
         if not token:
             message = (
                 f"FIGMA_TOKEN is not set and {token_path()} holds no token;"
@@ -144,6 +217,11 @@ class FigmaClient:
             )
             raise FigmaError({"error": "missing_token", "message": message})
         return cls(token, api_base())
+
+    def auth_headers(self) -> dict[str, str]:
+        if self.bearer:
+            return {"Authorization": f"Bearer {self.token}"}
+        return {TOKEN_HEADER: self.token}
 
     def request(
         self,
@@ -155,7 +233,7 @@ class FigmaClient:
         url = self.base_url + path
         if query:
             url += "?" + urllib.parse.urlencode(query)
-        headers = {TOKEN_HEADER: self.token, "Accept": "application/json"}
+        headers = {**self.auth_headers(), "Accept": "application/json"}
         data = None
         if body is not None:
             data = json.dumps(body).encode()
@@ -213,6 +291,15 @@ class FigmaClient:
     def delete_comment(self, file_key: str, comment_id: str) -> Any:
         path = f"/v1/files/{_quote(file_key)}/comments/{_quote(comment_id)}"
         return self.request("DELETE", path)
+
+
+def checked_me(client: FigmaClient) -> dict[str, Any]:
+    """GET /v1/me, insisting on a user id: proof the credential works."""
+    me = client.me()
+    if not isinstance(me, dict) or not me.get("id"):
+        message = "GET /v1/me returned no user id"
+        raise FigmaError({"error": "invalid_response", "message": message})
+    return me
 
 
 def download(url: str, timeout: float = TIMEOUT_SECONDS) -> bytes:
