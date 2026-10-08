@@ -160,7 +160,7 @@ pytest tests/
 
 The tests are hermetic: no network access and no Figma token are needed, and `HOME` points at a temporary directory so a stored token never leaks in. The redirect tests use real sockets on `127.0.0.1`.
 
-`tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` and `FIGMA_TEST_FILE_KEY` are set (add `FIGMA_TEST_NODE_ID` to exercise export). It posts one comment and deletes it, and runs `auth login` into a temporary `HOME`. CI runs it in the `live` job from the `FIGMA_TOKEN` secret and the `FIGMA_TEST_FILE_KEY` / `FIGMA_TEST_NODE_ID` repository variables, and skips it when they are absent.
+`tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` is set. With the token alone it checks `auth check` and runs `auth login` from stdin into a temporary `HOME`; the file, comment and export checks also need `FIGMA_TEST_FILE_KEY` (add `FIGMA_TEST_NODE_ID` to exercise export). The comment check posts one comment and deletes it. CI runs it in the `live` job from the `FIGMA_TOKEN` secret and the `FIGMA_TEST_FILE_KEY` / `FIGMA_TEST_NODE_ID` repository variables, and skips it when they are absent.
 
 ## Release
 
