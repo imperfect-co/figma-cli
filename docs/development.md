@@ -23,7 +23,7 @@ The hermetic suite (`tests/test_cli.py`, `tests/test_client.py`, `tests/test_oau
 
 ## Live tests
 
-`tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` is set, and skips otherwise.
+`tests/test_live.py` runs against the real API. Each check skips unless its variables are set: most need `FIGMA_TOKEN`, while the OAuth refresh check needs only its three OAuth variables.
 
 | Variable | Enables |
 | --- | --- |

@@ -64,13 +64,13 @@ Over SSH, in a container, or anywhere the browser runs on another machine, the b
 Paste the callback URL here (or finish in the browser):
 ```
 
-A bare `code=...&state=...` query string works too. The paste is held to the same checks as the browser redirect: the path must be `/callback` on the configured port and `state` must match, so a bare code without `state` is refused. A rejected paste is explained, the prompt returns, and the loopback server keeps listening.
+A bare `code=...&state=...` query string works too. A pasted URL must point at `http://127.0.0.1` (or `localhost`) on the configured port with the path `/callback`; a bare query string has no host or path to check. Either way `state` must match this login attempt, so a bare code without `state` is refused, and the paste must then carry a `code` (or the `error` Figma sent). A rejected paste is explained, the prompt returns, and the loopback server keeps listening.
 
 ### What is stored, and refresh
 
 The access token is checked against `GET /v1/me`. Then the access token, refresh token, expiry, client id and client secret are written to `~/.config/figma/token.json`.
 
-Figma access tokens last 90 days. When the stored one has expired (or is within 60 seconds of expiring), the next command refreshes it through `POST /v1/oauth/refresh` before running. The refresh holds an advisory lock on `~/.config/figma/token.json.lock` and re-reads the file once it has the lock, so concurrent commands refresh once rather than invalidating each other's tokens. Windows has no `fcntl`, so there the refresh runs unlocked.
+Figma access tokens last 90 days. When the stored one has expired (or is within 60 seconds of expiring), the next command refreshes it through `POST /v1/oauth/refresh` before running. The refresh holds an advisory lock on `~/.config/figma/token.json.lock` and re-reads the file once it has the lock, so on Linux and macOS concurrent commands refresh once rather than invalidating each other's tokens. Windows has no `fcntl`, so there the refresh runs unlocked and concurrent commands can each refresh, invalidating the access token another just received.
 
 A refresh that Figma rejects exits 3 with `refresh_failed` rather than falling back to an older personal access token. Run `figma auth login` again.
 
