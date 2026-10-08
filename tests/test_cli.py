@@ -1,5 +1,6 @@
 """Hermetic tests for the CLI entrypoint: no network, no installed scripts required."""
 
+import io
 import json
 import os
 import subprocess
@@ -242,7 +243,105 @@ def test_error_human_on_stderr(stub, monkeypatch, capsys):
     assert "forbidden (HTTP 403): Invalid token" in captured.err
 
 
-def test_missing_token_exits_three(monkeypatch, capsys):
+def test_missing_token_exits_three(home, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("FIGMA_TOKEN", raising=False)
     assert main(["auth", "check", "--json"]) == 3
     assert json.loads(capsys.readouterr().out)["error"] == "missing_token"
+
+
+# auth login: token acquisition, with a stub standing in for GET /v1/me.
+
+
+class FakeStdin(io.StringIO):
+    def __init__(self, text: str = "", tty: bool = False):
+        super().__init__(text)
+        self.tty = tty
+
+    def isatty(self):
+        return self.tty
+
+
+@pytest.fixture
+def login_stub(monkeypatch):
+    """Record the token login validates with; fail if it goes through from_env."""
+    seen = []
+
+    def build(token, base):
+        seen.append((token, base))
+        return StubClient()
+
+    def no_env():
+        raise AssertionError("auth login must not call FigmaClient.from_env")
+
+    monkeypatch.setattr("figma_cli.login.FigmaClient", build)
+    monkeypatch.setattr("figma_cli.cli.FigmaClient.from_env", no_env)
+    monkeypatch.delenv("FIGMA_TOKEN", raising=False)
+    monkeypatch.delenv("FIGMA_API_BASE", raising=False)
+    return seen
+
+
+def _stored(home: Path) -> str:
+    return (home / ".config" / "figma" / "token").read_text()
+
+
+def test_login_token_flag(login_stub, home, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", FakeStdin("ignored"))
+    assert main(["auth", "login", "--token", " figd_flag ", "--json"]) == 0
+    assert login_stub == [("figd_flag", "https://api.figma.com")]
+    assert _stored(home) == "figd_flag\n"
+    out = json.loads(capsys.readouterr().out)
+    assert out == {
+        "id": "1",
+        "handle": "agent",
+        "email": "a@example.com",
+        "token_path": str(home / ".config" / "figma" / "token"),
+    }
+
+
+@pytest.mark.parametrize("argv", [["--token", "-"], []])
+def test_login_reads_stdin(argv, login_stub, home, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", FakeStdin("figd_piped\n"))
+    assert main(["auth", "login", *argv]) == 0
+    assert login_stub[0][0] == "figd_piped"
+    assert _stored(home) == "figd_piped\n"
+    out = capsys.readouterr().out
+    assert "Authenticated as agent <a@example.com> (1)" in out
+    assert "Token saved to" in out
+
+
+@pytest.mark.parametrize("argv", [["--token", "-"], [], ["--token", " "]])
+def test_login_empty_token_exits_two(argv, login_stub, home, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", FakeStdin("  \n"))
+    assert main(["auth", "login", *argv, "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["error"] == "empty_token"
+    assert login_stub == []
+    assert not (home / ".config").exists()
+
+
+@pytest.mark.parametrize("flag, opened", [([], True), (["--no-browser"], False)])
+def test_login_interactive_prompt(flag, opened, login_stub, home, monkeypatch, capsys):
+    urls = []
+    monkeypatch.setattr(sys, "stdin", FakeStdin(tty=True))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: "figd_typed")
+    monkeypatch.setattr("webbrowser.open", urls.append)
+    assert main(["auth", "login", *flag]) == 0
+    assert urls == (["https://www.figma.com/settings"] if opened else [])
+    err = capsys.readouterr().err
+    for scope in (
+        "current_user:read",
+        "file_content:read",
+        "file_comments:read",
+        "file_comments:write",
+    ):
+        assert scope in err
+    assert _stored(home) == "figd_typed\n"
+
+
+def test_login_rejected_token_writes_nothing(login_stub, home, monkeypatch, capsys):
+    payload = {"error": "forbidden", "status": 403, "message": "Invalid token"}
+    monkeypatch.setattr(StubClient, "me", _raise(payload))
+    monkeypatch.setattr(sys, "stdin", FakeStdin("figd_bad"))
+    assert main(["auth", "login", "--json"]) == 3
+    assert json.loads(capsys.readouterr().out) == payload
+    assert not (home / ".config").exists()

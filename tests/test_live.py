@@ -4,8 +4,11 @@ FIGMA_TEST_NODE_ID (optional) names a frame to export. The comment test posts on
 comment and deletes it again.
 """
 
+import io
 import json
 import os
+import stat
+import sys
 import time
 
 import pytest
@@ -39,6 +42,19 @@ def test_bogus_token_is_structured(monkeypatch, capsys):
     code, out = _run(capsys, "auth", "check")
     assert code == 3
     assert out["status"] in (401, 403)
+
+
+def test_login_then_check_from_token_file(home, monkeypatch, capsys):
+    monkeypatch.delenv("FIGMA_TOKEN")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(TOKEN + "\n"))
+    code, out = _run(capsys, "auth", "login")
+    assert code == 0, out
+    path = home / ".config" / "figma" / "token"
+    assert out["token_path"] == str(path)
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    code, checked = _run(capsys, "auth", "check")
+    assert code == 0, checked
+    assert checked == {key: out[key] for key in ("id", "handle", "email")}
 
 
 def test_file_get_depth_one(capsys):
