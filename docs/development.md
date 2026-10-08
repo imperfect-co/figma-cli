@@ -28,8 +28,8 @@ The hermetic suite (`tests/test_cli.py`, `tests/test_client.py`, `tests/test_oau
 | Variable | Enables |
 | --- | --- |
 | `FIGMA_TOKEN` | `auth check`, and `auth login` from stdin into a temporary `HOME`. |
-| `FIGMA_TEST_FILE_KEY` | The file and comment checks. The comment check posts one comment and deletes it. |
-| `FIGMA_TEST_NODE_ID` | The export check (together with `FIGMA_TEST_FILE_KEY`). |
+| `FIGMA_TEST_FILE_KEY` | The file, comment and variable checks. The comment check posts one comment and deletes it. The variable check passes on either outcome: collections on an Enterprise token, or exit 3 `forbidden` elsewhere. |
+| `FIGMA_TEST_NODE_ID` | The export and `node get` checks (together with `FIGMA_TEST_FILE_KEY`). The `node get` check also asserts the call takes under 2 seconds and returns less than `file get` on the same file. |
 | `FIGMA_OAUTH_REFRESH_TOKEN`, `FIGMA_CLIENT_ID`, `FIGMA_CLIENT_SECRET` | The OAuth refresh check. Each refresh invalidates the previous access token for that app, so use an OAuth app kept for testing only. |
 
 CI runs them in the `live` job from the `FIGMA_TOKEN`, `FIGMA_OAUTH_REFRESH_TOKEN`, `FIGMA_CLIENT_ID` and `FIGMA_CLIENT_SECRET` secrets and the `FIGMA_TEST_FILE_KEY` and `FIGMA_TEST_NODE_ID` repository variables, and the tests skip cleanly when those are absent.

@@ -9,21 +9,24 @@ Grant the token (or the OAuth app) these scopes, the minimum the commands need p
 | Scope | Used by |
 | --- | --- |
 | `current_user:read` | `auth check`, `auth login` (`GET /v1/me`) |
-| `file_content:read` | `file get`, `export` |
+| `file_content:read` | `file get`, `node get`, `export` |
 | `file_comments:read` | `comment list` |
 | `file_comments:write` | `comment post`, `comment delete` |
+| `file_variables:read` | `variable list` (Figma Enterprise only, see below) |
+
+The Variables REST API is available only to full members of Figma Enterprise organizations, and the token needs `file_variables:read`. Anywhere else, `variable list` exits 3 with `forbidden` (HTTP 403); the other commands do not need this scope.
 
 ## Personal access tokens
 
 Create a personal access token under Figma account settings (Security > Personal access tokens) with the scopes above, then store it once:
 
 ```sh
-figma auth login                       # interactive: prints the steps, opens settings, hidden prompt
+figma auth login                       # interactive: browser OAuth if configured, else PAT steps and hidden prompt
 echo "$TOKEN" | figma auth login       # agents and CI: piped stdin
 figma auth login --token - < token.txt # same, explicit
 ```
 
-`auth login` takes this personal access token path whenever `--token` is given, stdin is piped, or no OAuth client credentials are configured.
+`auth login` takes this personal access token path whenever `--token` is given, stdin is piped, or no OAuth client credentials are configured. Without OAuth client credentials, the interactive prompt first explains how to enable 1-click browser login (create an OAuth app, then export `FIGMA_CLIENT_ID` and `FIGMA_CLIENT_SECRET`, see [below](#oauth-20-with-pkce-bring-your-own-app)), then lists the personal access token steps.
 
 - The token is validated against `GET /v1/me` before anything is written. A rejected token exits 3 and leaves any existing token file untouched.
 - Empty input exits 2 with `empty_token`. A token containing spaces, line breaks or non-ASCII characters exits 2 with `invalid_token`.
@@ -37,7 +40,7 @@ On success the command reports the authenticated `id`, `handle` and `email` plus
 
 figma-cli ships no OAuth app of its own: Figma authenticates the client with its secret on every token call, and a secret embedded in an open-source package is not a secret. Bring your own:
 
-1. Create an OAuth app in the [Figma developer console](https://www.figma.com/developers/apps) and register the redirect URL `http://127.0.0.1:54321/callback`. Grant it the four scopes above.
+1. Create an OAuth app in the [Figma developer console](https://www.figma.com/developers/apps) and register the redirect URL `http://127.0.0.1:54321/callback`. Grant it the scopes above. The login requests `current_user:read`, `file_content:read`, `file_comments:read` and `file_comments:write`, but not `file_variables:read`, so use a personal access token for `variable list`.
 2. Export its credentials and log in from an interactive terminal:
 
 ```sh

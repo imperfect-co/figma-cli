@@ -14,6 +14,8 @@ Every subcommand accepts `--json`: without it, it prints human-readable text; wi
 | `figma auth login [--token TOKEN\|-] [--no-browser]` | `GET /v1/me`, then writes `~/.config/figma/token` |
 | `figma auth login [--client-id ID] [--client-secret SECRET] [--port PORT]` | OAuth: `POST /v1/oauth/token`, `GET /v1/me`, then writes `~/.config/figma/token.json` |
 | `figma file get <file_key> [--depth N]` | `GET /v1/files/{file_key}?depth=N` |
+| `figma node get <file_key> --nodes <ids> [--depth N] [--geometry paths]` | `GET /v1/files/{file_key}/nodes?ids=<ids>&depth=N&geometry=paths` |
+| `figma variable list <file_key> [--published]` | `GET /v1/files/{file_key}/variables/local`, or `/variables/published` with `--published` |
 | `figma export <file_key> --nodes <ids> [--format png\|svg] [--output DIR]` | `GET /v1/images/{file_key}`, then the asset URLs |
 | `figma comment list <file_key>` | `GET /v1/files/{file_key}/comments` |
 | `figma comment post <file_key> --message TEXT [--comment-id ID] [--node-id ID]` | `POST /v1/files/{file_key}/comments` |
@@ -80,6 +82,53 @@ Fetches a file's node tree. `--depth` (a positive integer) is passed to Figma, s
 figma file get AbCdEf123 --depth 1
 figma file get AbCdEf123 --depth 2 --json | jq '.document.children[].name'
 ```
+
+## node get
+
+```text
+figma node get [--json] --nodes NODES [--depth DEPTH] [--geometry {paths}] file_key
+```
+
+Fetches only the subtrees you need instead of the whole file.
+
+| Flag | Meaning |
+| --- | --- |
+| `--nodes NODES` | Required. Comma-separated node ids. |
+| `--depth DEPTH` | Server-side subtree depth, a positive integer. |
+| `--geometry paths` | Add vector path data to each node. |
+
+The text output is the file header, then each requested node's tree in the order given. Ids Figma cannot find come back as `null` in the JSON and as a `not found` line in the text output; the command still exits 0:
+
+```console
+$ figma node get AbCdEf123 --nodes 1:2,9:9 --depth 1
+Spec (last modified 2026-01-01T00:00:00Z)
+FRAME Card (1:2)
+  TEXT Title (1:3)
+Node 9:9: not found
+```
+
+With `--json`, the response is Figma's, unchanged, keyed by node id under `nodes`.
+
+## variable list
+
+```text
+figma variable list [--json] [--published] file_key
+```
+
+Lists the design variables in a file, one collection per block with each variable's resolved type and its value in every mode. Colors print as hex, aliases as `-> <name>`, or `-> <id>` when the aliased variable is not in the response (such as one from a library). An extended collection inherits its parent's variables and values, with its own overrides applied per mode.
+
+```console
+$ figma variable list AbCdEf123
+Colors (VariableCollectionId:1:1) [modes: Light, Dark]
+  brand/primary  COLOR  Light=#FF0000  Dark=#00000080
+  text/default  COLOR  Light=-> brand/primary  Dark=-> VariableID:9:9
+  radius  FLOAT  Light=4  Dark=8
+```
+
+`--published` lists the variables this file publishes to its library instead; Figma returns no per-mode values for those. A file with none prints `No variables.`. With `--json`, the response is Figma's, unchanged.
+
+!!! warning "Figma Enterprise only"
+    The Variables REST API is available only to full members of Figma Enterprise organizations, with a token carrying `file_variables:read`. Anywhere else the command exits 3 with `{"error": "forbidden", "status": 403}`.
 
 ## export
 

@@ -10,7 +10,8 @@ The package declares `dependencies = []`. The CLI and the Python client are buil
 
 ## Features
 
-- **Inspection:** fetch a file's node tree, trimmed server side with `--depth`.
+- **Inspection:** fetch a file's node tree, trimmed server side with `--depth`, or only the node subtrees you need.
+- **Variables:** list a file's design variable collections with their values in every mode (Figma Enterprise).
 - **Export:** render nodes to PNG or SVG files on disk.
 - **Comments:** list, post (including replies and node-anchored comments) and delete file comments.
 - **Two ways to authenticate:** a personal access token, or OAuth 2.0 with PKCE through your own Figma OAuth app, with automatic refresh. See [Authentication](auth.md).
@@ -51,6 +52,7 @@ Store a personal access token once (see [Authentication](auth.md) for the scopes
 figma auth login                                  # hidden prompt for the token
 figma auth check --json                           # who am I?
 figma file get AbCdEf123 --depth 1                # list the pages of a file
+figma node get AbCdEf123 --nodes 1:2              # fetch one frame's subtree
 figma export AbCdEf123 --nodes 1:2 --output shots # render a frame to PNG
 figma comment list AbCdEf123
 ```

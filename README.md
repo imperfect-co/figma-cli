@@ -2,7 +2,7 @@
 
 Headless Figma CLI for AI coding agents and automated design inspection.
 
-Inspect Figma files, export nodes to PNG or SVG, and manage comments from a terminal, CI job or agent, with JSON output and stable exit codes. Zero runtime dependencies; requires Python 3.11 or newer.
+Inspect Figma files, nodes and design variables, export nodes to PNG or SVG, and manage comments from a terminal, CI job or agent, with JSON output and stable exit codes. Zero runtime dependencies; requires Python 3.11 or newer.
 
 **Documentation: https://figma-cli.readthedocs.io/**
 

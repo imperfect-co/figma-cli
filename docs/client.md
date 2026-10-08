@@ -32,6 +32,8 @@ client = FigmaClient("figd_...", base_url="https://api.figma.com", timeout=60)
 | --- | --- | --- |
 | `me()` | `GET /v1/me` | The user object. |
 | `get_file(file_key, depth=None)` | `GET /v1/files/{file_key}` | The file document. |
+| `get_nodes(file_key, node_ids, depth=None, geometry=None)` | `GET /v1/files/{file_key}/nodes` | `{"nodes": {...}}` keyed by node id, `null` for an id Figma cannot find. |
+| `get_variables(file_key, published=False)` | `GET /v1/files/{file_key}/variables/local` (or `/published`) | The variables payload. Figma Enterprise only; elsewhere it raises `FigmaError` with `forbidden`. |
 | `get_images(file_key, node_ids, fmt)` | `GET /v1/images/{file_key}` | A dict of node id to pre-signed image URL (or `None` for a node Figma could not render). |
 | `list_comments(file_key)` | `GET /v1/files/{file_key}/comments` | `{"comments": [...]}` |
 | `post_comment(file_key, message, comment_id=None, node_id=None)` | `POST /v1/files/{file_key}/comments` | The created comment. `comment_id` makes it a reply; `node_id` anchors it to a node. |
