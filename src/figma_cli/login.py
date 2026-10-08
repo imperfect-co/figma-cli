@@ -1,26 +1,30 @@
 """``figma auth login``: obtain a token, validate it, then store it.
 
 The token is checked against ``GET /v1/me`` before anything touches disk, so a
-rejected token never replaces a working one.
+rejected token never replaces a working one. The OAuth browser flow lives in
+``figma_cli.oauth``.
 """
 
 import argparse
 import getpass
-import os
-import secrets
 import sys
 import webbrowser
 from pathlib import Path
 
-from figma_cli.client import EXIT_USAGE, FigmaClient, FigmaError, api_base, token_path
+from figma_cli import oauth
+from figma_cli.client import (
+    FigmaClient,
+    FigmaError,
+    UsageError,
+    api_base,
+    checked_me,
+    token_json_path,
+    token_path,
+    write_private,
+)
 
 SETTINGS_URL = "https://www.figma.com/settings"
-SCOPES = (
-    "current_user:read",
-    "file_content:read",
-    "file_comments:read",
-    "file_comments:write",
-)
+SCOPES = oauth.SCOPES
 INSTRUCTIONS = f"""\
 Create a personal access token for figma-cli:
   1. Open {SETTINGS_URL} and go to Security > Personal access tokens.
@@ -30,13 +34,8 @@ Create a personal access token for figma-cli:
 """
 
 
-class TokenInputError(FigmaError):
+class TokenInputError(UsageError):
     """A missing or malformed token on input: a usage error, exit 2."""
-
-    exit_code = EXIT_USAGE
-
-    def __init__(self, error: str, message: str):
-        super().__init__({"error": error, "message": message})
 
 
 def _prompt(open_browser: bool) -> str:
@@ -64,45 +63,30 @@ def candidate_token(args: argparse.Namespace) -> str:
 
 
 def save_token(token: str) -> Path:
-    """Store the token at mode 0600, replacing any old file only once it is written.
+    """Store a personal access token at mode 0600 and drop any OAuth tokens.
 
-    The new file is created 0600 under a fresh name (O_EXCL, so never through a
-    planted file or symlink), then renamed over the old one: a failed write
-    leaves the previous token intact, and nothing is ever readable by others.
+    ``token.json`` outranks the plaintext file, so leaving it in place would let
+    stale OAuth tokens silently shadow the token just saved.
     """
     path = token_path()
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}")
+    write_private(path, token + "\n")
     try:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        path.parent.chmod(0o700)  # refuses a directory owned by someone else
-        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(token + "\n")
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, path)
-            try:
-                dir_fd = os.open(path.parent, os.O_RDONLY)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
-            except OSError:
-                pass
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
+        token_json_path().unlink(missing_ok=True)
     except OSError as err:
         raise FigmaError({"error": "write_failed", "message": str(err)}) from None
     return path
 
 
 def login(args: argparse.Namespace) -> tuple[dict, Path]:
-    """Validate a candidate token, store it, and return (identity, path)."""
+    """Obtain and validate a credential, store it, and return (identity, path).
+
+    An interactive terminal with OAuth client credentials runs the browser flow;
+    everything else (--token, piped stdin, no client credentials) takes a PAT.
+    """
+    if args.token is None and sys.stdin.isatty():
+        client = oauth.client_credentials(args.client_id, args.client_secret)
+        if client:
+            return oauth.login(client, args.port, args.browser is not False)
     token = candidate_token(args)
-    me = FigmaClient(token, api_base()).me()
-    if not isinstance(me, dict) or not me.get("id"):
-        message = "GET /v1/me returned no user id"
-        raise FigmaError({"error": "invalid_response", "message": message})
+    me = checked_me(FigmaClient(token, api_base()))
     return me, save_token(token)

@@ -14,6 +14,7 @@ from typing import Any
 from figma_cli import __version__
 from figma_cli.client import FigmaClient, FigmaError, download
 from figma_cli.login import login
+from figma_cli.oauth import DEFAULT_PORT
 
 # Most handlers take (client, args); those marked needs_client=False take (args).
 Handler = Callable[..., tuple[Any, str]]
@@ -123,6 +124,13 @@ def _positive_int(value: str) -> int:
     return number
 
 
+def _port(value: str) -> int:
+    number = int(value)
+    if not 1 <= number <= 65535:
+        raise argparse.ArgumentTypeError("must be between 1 and 65535")
+    return number
+
+
 def _node_list(value: str) -> list[str]:
     nodes = [n.strip() for n in value.split(",") if n.strip()]
     if not nodes:
@@ -138,7 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Environment: FIGMA_TOKEN (optional when 'figma auth login' has stored"
-            " ~/.config/figma/token), FIGMA_API_BASE (optional)."
+            " ~/.config/figma/token.json or ~/.config/figma/token), FIGMA_API_BASE"
+            " (optional), FIGMA_CLIENT_ID and FIGMA_CLIENT_SECRET (OAuth login)."
         ),
     )
     parser.add_argument(
@@ -157,7 +166,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = auth_cmds.add_parser(
         "login",
         parents=[common],
-        help="validate a token and store it in ~/.config/figma/token",
+        help=(
+            "authorize via OAuth (with client credentials) or store a personal"
+            " access token, after validating it"
+        ),
     )
     p.add_argument(
         "--token",
@@ -169,7 +181,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--browser",
         action=argparse.BooleanOptionalAction,
-        help="open Figma settings when prompting interactively (default: open)",
+        help=("open Figma settings or the OAuth page when interactive (default: open)"),
+    )
+    p.add_argument(
+        "--client-id", help="OAuth app client id (default: $FIGMA_CLIENT_ID)"
+    )
+    p.add_argument(
+        "--client-secret",
+        help=(
+            "OAuth app client secret (default: $FIGMA_CLIENT_SECRET); a literal"
+            " value shows in ps and shell history, so prefer the variable"
+        ),
+    )
+    p.add_argument(
+        "--port",
+        type=_port,
+        default=DEFAULT_PORT,
+        help=(
+            "loopback port for the OAuth redirect http://127.0.0.1:PORT/callback"
+            f" (default: {DEFAULT_PORT})"
+        ),
     )
     p.set_defaults(handler=_auth_login, needs_client=False)
 

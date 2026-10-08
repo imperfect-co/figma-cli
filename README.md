@@ -24,7 +24,7 @@ The npm package `silships/figma-cli` also installs a `figma-cli` executable. If 
 
 ## Usage
 
-Every command talks to the Figma REST API with a personal access token. Create one under Figma account settings (Security > Personal access tokens) with these scopes, the minimum the commands below need per [Figma's scope reference](https://developers.figma.com/docs/rest-api/scopes/):
+Every command talks to the Figma REST API with either a personal access token or an OAuth token from your own Figma OAuth app (see [OAuth login](#oauth-login)). Create a personal access token under Figma account settings (Security > Personal access tokens) with these scopes, the minimum the commands below need per [Figma's scope reference](https://developers.figma.com/docs/rest-api/scopes/):
 
 | Scope | Used by |
 | --- | --- |
@@ -43,20 +43,41 @@ figma auth login --token - < token.txt # same, explicit
 
 `auth login` validates the token against `GET /v1/me` before writing anything. A rejected token exits 3 and leaves any existing token file untouched. A valid one is written to `~/.config/figma/token` with mode `0600` (its directory `0700`), through a temporary file renamed into place, so a failed write keeps the previous token, and the command reports the authenticated `id`, `handle` and `email` plus the file path. Prefer stdin over `--token <value>`, which exposes the token in process listings and shell history. Empty stdin exits 2. Add `--no-browser` to skip opening the settings page.
 
-Alternatively, export the token. `FIGMA_TOKEN` takes precedence over the stored file whenever it is set and non-empty:
+`auth login` takes this personal access token path whenever `--token` is given, stdin is piped, or no OAuth client credentials are configured. Saving a personal access token also removes `~/.config/figma/token.json`, so stale OAuth tokens never shadow it.
+
+Alternatively, export the token. `FIGMA_TOKEN` takes precedence over the stored files whenever it is set and non-empty. A value starting `figu_` (an OAuth access token) is sent as `Authorization: Bearer`, anything else as `X-Figma-Token`:
 
 ```sh
 export FIGMA_TOKEN=figd_...
 export FIGMA_API_BASE=https://api.figma.com   # optional, this is the default
 ```
 
-With neither set, commands fail with `{"error": "missing_token"}` and exit code 3.
+Credentials resolve in this order: `FIGMA_TOKEN`, then `~/.config/figma/token.json` (OAuth), then `~/.config/figma/token` (personal access token). With none of them, commands fail with `{"error": "missing_token"}` and exit code 3.
+
+### OAuth login
+
+figma-cli ships no OAuth app of its own: Figma authenticates the client with its secret on every token call, and a secret embedded in an open-source package is not a secret. Bring your own:
+
+1. Create an OAuth app in the [Figma developer console](https://www.figma.com/developers/apps) and register the redirect URL `http://127.0.0.1:54321/callback`. Grant it the four scopes above.
+2. Export its credentials and log in from an interactive terminal:
+
+```sh
+export FIGMA_CLIENT_ID=...
+export FIGMA_CLIENT_SECRET=...
+figma auth login                 # opens the browser, waits on 127.0.0.1:54321
+figma auth login --port 8765     # if you registered http://127.0.0.1:8765/callback instead
+```
+
+`--client-id` and `--client-secret` override the variables, but a literal secret shows in process listings and shell history. The flow uses PKCE (S256) and a random `state`; a callback with the wrong `state` is answered with HTTP 400 and ignored. Because Figma matches redirect URLs exactly, a busy port is not swapped for another one: the command exits 2 with `{"error": "port_unavailable"}`. Add `--no-browser` to print the authorization URL without opening it.
+
+The access token is checked against `GET /v1/me`, then the access token, refresh token, expiry, client id and client secret are written to `~/.config/figma/token.json` (mode `0600`, directory `0700`, atomic replace). Figma access tokens last 90 days. When the stored one has expired, the next command refreshes it through `POST /v1/oauth/refresh` before running. The refresh holds an advisory lock on `~/.config/figma/token.json.lock` and re-reads the file once it has the lock, so concurrent commands refresh once rather than invalidating each other's tokens (Windows has no `fcntl`, so there the refresh runs unlocked). A refresh Figma rejects exits 3 with `{"error": "refresh_failed"}` rather than falling back to an older personal access token; run `figma auth login` again.
 
 Every subcommand prints human-readable text by default and a JSON document on stdout with `--json`.
 
 | Command | Figma endpoint |
 | --- | --- |
 | `figma auth login [--token TOKEN\|-] [--no-browser]` | `GET /v1/me`, then writes `~/.config/figma/token` |
+| `figma auth login [--client-id ID] [--client-secret SECRET] [--port PORT]` | OAuth: `POST /v1/oauth/token`, `GET /v1/me`, then writes `~/.config/figma/token.json` |
 | `figma auth check` | `GET /v1/me` |
 | `figma file get <file_key> [--depth N]` | `GET /v1/files/{file_key}?depth=N` |
 | `figma export <file_key> --nodes <ids> [--format png\|svg] [--output DIR]` | `GET /v1/images/{file_key}`, then the asset URLs |
@@ -125,7 +146,7 @@ HTTP 429 is reported at once, never retried, so the caller decides when to try a
 
 ### Token safety
 
-A request carrying `X-Figma-Token` follows no redirects. Any 3xx answer is refused with `{"error": "redirect_refused"}` and exit code 3 before a second request is made, so the token never reaches another host. Exported images are downloaded from the pre-signed URLs Figma returns with a separate request that carries no token; only that request follows redirects.
+A request carrying a credential (`X-Figma-Token`, `Authorization: Bearer`, or the `Authorization: Basic` client credentials on the OAuth token calls) follows no redirects. Any 3xx answer is refused with `{"error": "redirect_refused"}` and exit code 3 before a second request is made, so the credential never reaches another host. Exported images are downloaded from the pre-signed URLs Figma returns with a separate request that carries no token; only that request follows redirects.
 
 ## Installation and quick run
 
