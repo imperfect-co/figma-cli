@@ -108,7 +108,7 @@ def load_app_config() -> dict[str, str]:
     if not isinstance(record, dict) or not all(
         isinstance(record.get(key, ""), str) for key in _APP_FIELDS
     ):
-        message = f"{path} must be a JSON object with string {' and '.join(_APP_FIELDS)}"
+        message = f"{path} must be a JSON object of string client_id/client_secret"
         raise FigmaError({"error": "config_unreadable", "message": message})
     return {key: record[key] for key in _APP_FIELDS if key in record}
 

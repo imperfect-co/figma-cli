@@ -97,12 +97,24 @@ def test_authorization_url():
     }
 
 
-# Client credentials: flags, then environment, never a built-in default.
+# Client credentials: flags, then environment, then the user's own app.json;
+# never a built-in default.
 
 
-def test_client_credentials_resolution(monkeypatch):
+@pytest.fixture
+def no_client_env(monkeypatch):
     monkeypatch.delenv("FIGMA_CLIENT_ID", raising=False)
     monkeypatch.delenv("FIGMA_CLIENT_SECRET", raising=False)
+
+
+def _seed_app(home, record):
+    path = _figma_dir(home) / "app.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(record if isinstance(record, str) else json.dumps(record))
+    return path
+
+
+def test_client_credentials_resolution(no_client_env, monkeypatch):
     assert oauth.client_credentials(None, None) is None
     monkeypatch.setenv("FIGMA_CLIENT_ID", "env-id")
     monkeypatch.setenv("FIGMA_CLIENT_SECRET", "env-secret")
@@ -113,6 +125,65 @@ def test_client_credentials_resolution(monkeypatch):
         oauth.client_credentials(None, None)
     assert exc.value.payload["error"] == "missing_client_credentials"
     assert exc.value.exit_code == 2
+
+
+def test_client_credentials_from_app_json(no_client_env, home, monkeypatch):
+    _seed_app(home, {"client_id": "stored-id", "client_secret": "stored-secret"})
+    assert oauth.client_credentials(None, None) == ("stored-id", "stored-secret")
+    assert oauth.client_credentials("flag-id", None) == ("flag-id", "stored-secret")
+    monkeypatch.setenv("FIGMA_CLIENT_ID", "env-id")
+    assert oauth.client_credentials(None, None) == ("env-id", "stored-secret")
+    monkeypatch.setenv("FIGMA_CLIENT_SECRET", "env-secret")
+    assert oauth.client_credentials(None, None) == ("env-id", "env-secret")
+    assert oauth.client_credentials("f-id", "f-secret") == ("f-id", "f-secret")
+
+
+@pytest.mark.parametrize("record", [{"client_secret": "s"}, {"client_id": "i"}])
+def test_client_credentials_lone_stored_half_exits_two(no_client_env, home, record):
+    _seed_app(home, record)
+    with pytest.raises(UsageError) as exc:
+        oauth.client_credentials(None, None)
+    assert exc.value.payload["error"] == "missing_client_credentials"
+    assert exc.value.exit_code == 2
+
+
+BAD_APP_JSON = [
+    "{not json",
+    "[]",
+    '"client"',
+    {"client_id": 1, "client_secret": "s"},
+    {"client_id": "i", "client_secret": None},
+]
+
+
+@pytest.mark.parametrize("record", BAD_APP_JSON)
+def test_corrupt_app_json_exits_three(no_client_env, home, record):
+    _seed_app(home, record)
+    with pytest.raises(FigmaError) as exc:
+        oauth.client_credentials(None, None)
+    assert exc.value.payload["error"] == "config_unreadable"
+    assert exc.value.exit_code == 3
+
+
+def test_full_flags_or_env_skip_corrupt_app_json(no_client_env, home, monkeypatch):
+    _seed_app(home, "{not json")
+    assert oauth.client_credentials("f-id", "f-secret") == ("f-id", "f-secret")
+    monkeypatch.setenv("FIGMA_CLIENT_ID", "env-id")
+    monkeypatch.setenv("FIGMA_CLIENT_SECRET", "env-secret")
+    assert oauth.client_credentials(None, None) == ("env-id", "env-secret")
+
+
+def test_app_config_round_trip(home):
+    assert oauth.app_config_path() == _figma_dir(home) / "app.json"
+    assert oauth.load_app_config() == {}
+    path = oauth.save_app_config("stored-id", "stored-secret")
+    assert path == oauth.app_config_path()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    expected = {"client_id": "stored-id", "client_secret": "stored-secret"}
+    assert json.loads(path.read_text()) == expected
+    assert oauth.load_app_config() == expected
+    assert [p.name for p in path.parent.iterdir()] == ["app.json"]
 
 
 # The loopback callback server.

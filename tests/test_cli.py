@@ -548,6 +548,70 @@ def test_login_interactive_prompt(flag, opened, login_stub, home, monkeypatch, c
     assert _stored(home) == "figd_typed\n"
 
 
+@pytest.fixture
+def oauth_stub(monkeypatch):
+    """Record the client pair the browser flow would start with."""
+    seen = []
+
+    def fake_login(client, port, open_browser):
+        seen.append(client)
+        return {"id": "1"}, Path("token.json")
+
+    monkeypatch.setattr("figma_cli.oauth.login", fake_login)
+    monkeypatch.delenv("FIGMA_CLIENT_ID", raising=False)
+    monkeypatch.delenv("FIGMA_CLIENT_SECRET", raising=False)
+    return seen
+
+
+def _app_json(home: Path) -> Path:
+    return home / ".config" / "figma" / "app.json"
+
+
+def test_login_uses_stored_app(oauth_stub, login_stub, home, monkeypatch):
+    path = _app_json(home)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"client_id": "cid", "client_secret": "sec"}))
+    monkeypatch.setattr(sys, "stdin", FakeStdin(tty=True))
+    monkeypatch.setattr("getpass.getpass", _raise({"error": "prompted"}))
+    assert main(["auth", "login", "--json"]) == 0
+    assert oauth_stub == [("cid", "sec")]
+    assert login_stub == []
+
+
+def test_login_prompt_saves_app_and_runs_oauth(
+    oauth_stub, login_stub, home, monkeypatch, capsys
+):
+    monkeypatch.setattr(sys, "stdin", FakeStdin(" typed-id \n", tty=True))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: " typed-secret ")
+    assert main(["auth", "login", "--json"]) == 0
+    assert oauth_stub == [("typed-id", "typed-secret")]
+    assert login_stub == []
+    path = _app_json(home)
+    assert json.loads(path.read_text()) == {
+        "client_id": "typed-id",
+        "client_secret": "typed-secret",
+    }
+    assert os.stat(path).st_mode & 0o777 == 0o600
+    err = capsys.readouterr().err
+    assert "http://127.0.0.1:54321/callback" in err
+    assert str(path) in err
+
+
+@pytest.mark.parametrize("typed_id, secret", [("", "unused"), ("typed-id", " ")])
+def test_login_skipped_prompt_falls_back_to_pat(
+    typed_id, secret, oauth_stub, login_stub, home, monkeypatch
+):
+    answers = iter([secret, "figd_typed"] if typed_id else ["figd_typed"])
+    monkeypatch.setattr(sys, "stdin", FakeStdin(typed_id + "\n", tty=True))
+    monkeypatch.setattr("getpass.getpass", lambda prompt: next(answers))
+    monkeypatch.setattr("webbrowser.open", lambda url: None)
+    assert main(["auth", "login", "--json"]) == 0
+    assert oauth_stub == []
+    assert login_stub[0][0] == "figd_typed"
+    assert _stored(home) == "figd_typed\n"
+    assert not _app_json(home).exists()
+
+
 def test_login_rejected_token_writes_nothing(login_stub, home, monkeypatch, capsys):
     payload = {"error": "forbidden", "status": 403, "message": "Invalid token"}
     monkeypatch.setattr(StubClient, "me", _raise(payload))

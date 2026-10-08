@@ -62,7 +62,7 @@ Credentials resolve in this order: `FIGMA_TOKEN`, then `~/.config/figma/token.js
 figma-cli ships no OAuth app of its own: Figma authenticates the client with its secret on every token call, and a secret embedded in an open-source package is not a secret. Bring your own:
 
 1. Create an OAuth app in the [Figma developer console](https://www.figma.com/developers/apps) and register the redirect URL `http://127.0.0.1:54321/callback`. Grant it the scopes above (`file_variables:read` only on Enterprise).
-2. Export its credentials and log in from an interactive terminal:
+2. Log in from an interactive terminal. With no client credentials configured, `figma auth login` asks once for the app's client id and secret (the secret is read hidden) and saves them to `~/.config/figma/app.json` (mode `0600`, directory `0700`, atomic replace), then starts the browser flow. Press Enter at either prompt to skip to a personal access token instead. To skip the prompt, export the credentials:
 
 ```sh
 export FIGMA_CLIENT_ID=...
@@ -71,7 +71,9 @@ figma auth login                 # opens the browser, waits on 127.0.0.1:54321
 figma auth login --port 8765     # if you registered http://127.0.0.1:8765/callback instead
 ```
 
-`--client-id` and `--client-secret` override the variables, but a literal secret shows in process listings and shell history. The flow uses PKCE (S256) and a random `state`; a callback with the wrong `state` is answered with HTTP 400 and ignored. Because Figma matches redirect URLs exactly, a busy port is not swapped for another one: the command exits 2 with `{"error": "port_unavailable"}`. Add `--no-browser` to print the authorization URL without opening it.
+Each half resolves on its own: `--client-id` / `--client-secret`, then `FIGMA_CLIENT_ID` / `FIGMA_CLIENT_SECRET`, then `~/.config/figma/app.json`, which is read only when flags and variables leave a half missing. Halves can come from different places, so an id from one app paired with a stored secret from another fails at Figma's token endpoint rather than locally. A lone half exits 2 with `{"error": "missing_client_credentials"}`, and an `app.json` that is not a JSON object of strings exits 3 with `{"error": "config_unreadable"}`. A personal access token login leaves `app.json` in place.
+
+A literal `--client-secret` shows in process listings and shell history. The flow uses PKCE (S256) and a random `state`; a callback with the wrong `state` is answered with HTTP 400 and ignored. Because Figma matches redirect URLs exactly, a busy port is not swapped for another one: the command exits 2 with `{"error": "port_unavailable"}`. Add `--no-browser` to print the authorization URL without opening it.
 
 Over SSH, in a container, or anywhere the browser runs on another machine, its redirect to `127.0.0.1` never reaches figma-cli. While it waits, the command reads the terminal: after authorizing, copy the full URL from the browser's address bar (the page itself fails to load) and paste it at the `Paste the callback URL here` prompt. A `code=...&state=...` query string works too. The paste is held to the same checks as the browser redirect: the path must be `/callback` on the configured port and `state` must match, so a bare code without `state` is refused. A rejected paste is explained and the prompt returns while the loopback server keeps listening.
 
