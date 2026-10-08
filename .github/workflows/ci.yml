@@ -30,14 +30,19 @@ jobs:
         run: pytest tests/
 
   live:
-    # Runs against the real Figma API when the FIGMA_TOKEN secret is configured;
-    # the tests skip cleanly when it is absent (forks, unconfigured repos).
+    # Runs against the real Figma API when the FIGMA_TOKEN (and, for OAuth, the
+    # FIGMA_OAUTH_REFRESH_TOKEN, FIGMA_CLIENT_ID and FIGMA_CLIENT_SECRET) secrets are
+    # configured; the tests skip cleanly when they are absent (forks, unconfigured).
     runs-on: ubuntu-latest
     needs: test
     env:
       FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
       FIGMA_TEST_FILE_KEY: ${{ vars.FIGMA_TEST_FILE_KEY }}
       FIGMA_TEST_NODE_ID: ${{ vars.FIGMA_TEST_NODE_ID }}
+      # A dedicated test OAuth app: each refresh invalidates its last access token.
+      FIGMA_OAUTH_REFRESH_TOKEN: ${{ secrets.FIGMA_OAUTH_REFRESH_TOKEN }}
+      FIGMA_CLIENT_ID: ${{ secrets.FIGMA_CLIENT_ID }}
+      FIGMA_CLIENT_SECRET: ${{ secrets.FIGMA_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v5
         with:

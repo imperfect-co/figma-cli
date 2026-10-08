@@ -3,6 +3,10 @@ comment checks also need FIGMA_TEST_FILE_KEY.
 
 FIGMA_TEST_NODE_ID (optional) names a frame to export. The comment test posts one
 comment and deletes it again.
+
+The OAuth check needs FIGMA_OAUTH_REFRESH_TOKEN, FIGMA_CLIENT_ID and
+FIGMA_CLIENT_SECRET. Each refresh invalidates the user's previous access token for
+that app, so point it at an OAuth app used only for testing.
 """
 
 import io
@@ -14,14 +18,22 @@ import time
 
 import pytest
 
+from figma_cli import oauth
 from figma_cli.cli import main
+from figma_cli.client import FigmaClient
 
 TOKEN = os.environ.get("FIGMA_TOKEN", "").strip()
 FILE_KEY = os.environ.get("FIGMA_TEST_FILE_KEY", "").strip()
 NODE_ID = os.environ.get("FIGMA_TEST_NODE_ID", "").strip()
+OAUTH = {
+    name: os.environ.get(name, "").strip()
+    for name in ("FIGMA_OAUTH_REFRESH_TOKEN", "FIGMA_CLIENT_ID", "FIGMA_CLIENT_SECRET")
+}
 
-pytestmark = pytest.mark.skipif(not TOKEN, reason="FIGMA_TOKEN not set")
-needs_file = pytest.mark.skipif(not FILE_KEY, reason="FIGMA_TEST_FILE_KEY not set")
+needs_token = pytest.mark.skipif(not TOKEN, reason="FIGMA_TOKEN not set")
+needs_file = pytest.mark.skipif(
+    not (TOKEN and FILE_KEY), reason="FIGMA_TOKEN or FIGMA_TEST_FILE_KEY not set"
+)
 
 
 def _run(capsys, *argv):
@@ -29,6 +41,7 @@ def _run(capsys, *argv):
     return code, json.loads(capsys.readouterr().out)
 
 
+@needs_token
 def test_auth_check(capsys):
     start = time.monotonic()
     code, out = _run(capsys, "auth", "check")
@@ -37,6 +50,7 @@ def test_auth_check(capsys):
     assert time.monotonic() - start < 2
 
 
+@needs_token
 def test_bogus_token_is_structured(monkeypatch, capsys):
     monkeypatch.setenv("FIGMA_TOKEN", "bogus")
     code, out = _run(capsys, "auth", "check")
@@ -44,6 +58,7 @@ def test_bogus_token_is_structured(monkeypatch, capsys):
     assert out["status"] in (401, 403)
 
 
+@needs_token
 def test_login_then_check_from_token_file(home, monkeypatch, capsys):
     monkeypatch.delenv("FIGMA_TOKEN")
     monkeypatch.setattr(sys, "stdin", io.StringIO(TOKEN + "\n"))
@@ -87,3 +102,30 @@ def test_comment_round_trip(capsys):
     finally:
         code, deleted = _run(capsys, "comment", "delete", FILE_KEY, posted["id"])
         assert code == 0, deleted
+
+
+@pytest.mark.skipif(
+    not all(OAUTH.values()),
+    reason="FIGMA_OAUTH_REFRESH_TOKEN, FIGMA_CLIENT_ID or FIGMA_CLIENT_SECRET not set",
+)
+def test_oauth_refresh_and_me(home, monkeypatch, capsys):
+    monkeypatch.delenv("FIGMA_TOKEN", raising=False)
+    monkeypatch.delenv("FIGMA_API_BASE", raising=False)
+    client = (OAUTH["FIGMA_CLIENT_ID"], OAUTH["FIGMA_CLIENT_SECRET"])
+    path = oauth.save_oauth_token(
+        {
+            "access_token": "expired",
+            "refresh_token": OAUTH["FIGMA_OAUTH_REFRESH_TOKEN"],
+            "expires_at": 0,
+            "client_id": client[0],
+            "client_secret": client[1],
+        }
+    )
+    code, out = _run(capsys, "auth", "check")
+    assert code == 0, out
+    assert set(out) == {"id", "handle", "email"}
+    stored = json.loads(path.read_text())
+    assert stored["access_token"] != "expired"
+    assert stored["expires_at"] > time.time()
+    bearer = FigmaClient(stored["access_token"], bearer=True)
+    assert bearer.me()["id"] == out["id"]
