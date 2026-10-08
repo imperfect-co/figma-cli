@@ -255,6 +255,7 @@ class OAuthCallbackServer(HTTPServer):
 
 class _CallbackHandler(BaseHTTPRequestHandler):
     server: OAuthCallbackServer
+    timeout = 10  # a browser preconnect that never sends must not stall the flow
 
     def do_GET(self):
         url = urllib.parse.urlsplit(self.path)

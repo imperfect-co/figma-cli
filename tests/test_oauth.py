@@ -151,6 +151,22 @@ def test_callback_rejects_state_mismatch_then_accepts_valid():
     assert answers[2][1].startswith("<!doctype html>")
 
 
+def test_idle_connection_does_not_block_callback(monkeypatch):
+    """A preconnected socket that never sends a request times out and is dropped."""
+    monkeypatch.setattr(oauth._CallbackHandler, "timeout", 0.3)
+    port = _free_port()
+    server = oauth._bind(port, "s")
+    idle = socket.create_connection(("127.0.0.1", port))
+    thread = threading.Thread(target=lambda: _callback(port, code="c", state="s"))
+    thread.start()
+    try:
+        assert oauth._await_code(server, 5) == "c"
+    finally:
+        idle.close()
+        thread.join()
+        server.server_close()
+
+
 def test_callback_error_is_oauth_denied():
     port = _free_port()
     server = oauth._bind(port, "s")
