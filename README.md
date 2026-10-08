@@ -29,9 +29,12 @@ Every command talks to the Figma REST API with either a personal access token or
 | Scope | Used by |
 | --- | --- |
 | `current_user:read` | `auth check`, `auth login` (`GET /v1/me`) |
-| `file_content:read` | `file get`, `export` |
+| `file_content:read` | `file get`, `node get`, `export` |
 | `file_comments:read` | `comment list` |
 | `file_comments:write` | `comment post`, `comment delete` |
+| `file_variables:read` | `variable list` (Figma Enterprise only, see below) |
+
+The Variables REST API is available only to full members of Figma Enterprise organizations, and the token needs `file_variables:read`. Anywhere else, `variable list` exits 3 with `{"error": "forbidden", "status": 403}`; the other commands do not need this scope.
 
 Then store it once with `figma auth login`:
 
@@ -58,7 +61,7 @@ Credentials resolve in this order: `FIGMA_TOKEN`, then `~/.config/figma/token.js
 
 figma-cli ships no OAuth app of its own: Figma authenticates the client with its secret on every token call, and a secret embedded in an open-source package is not a secret. Bring your own:
 
-1. Create an OAuth app in the [Figma developer console](https://www.figma.com/developers/apps) and register the redirect URL `http://127.0.0.1:54321/callback`. Grant it the four scopes above.
+1. Create an OAuth app in the [Figma developer console](https://www.figma.com/developers/apps) and register the redirect URL `http://127.0.0.1:54321/callback`. Grant it the scopes above (`file_variables:read` only on Enterprise).
 2. Export its credentials and log in from an interactive terminal:
 
 ```sh
@@ -82,6 +85,8 @@ Every subcommand prints human-readable text by default and a JSON document on st
 | `figma auth login [--client-id ID] [--client-secret SECRET] [--port PORT]` | OAuth: `POST /v1/oauth/token`, `GET /v1/me`, then writes `~/.config/figma/token.json` |
 | `figma auth check` | `GET /v1/me` |
 | `figma file get <file_key> [--depth N]` | `GET /v1/files/{file_key}?depth=N` |
+| `figma node get <file_key> --nodes <ids> [--depth N] [--geometry paths]` | `GET /v1/files/{file_key}/nodes?ids=<ids>&depth=N&geometry=paths` |
+| `figma variable list <file_key> [--published]` | `GET /v1/files/{file_key}/variables/local`, or `/variables/published` with `--published` |
 | `figma export <file_key> --nodes <ids> [--format png\|svg] [--output DIR]` | `GET /v1/images/{file_key}`, then the asset URLs |
 | `figma comment list <file_key>` | `GET /v1/files/{file_key}/comments` |
 | `figma comment post <file_key> --message TEXT [--comment-id ID] [--node-id ID]` | `POST /v1/files/{file_key}/comments` |
@@ -107,6 +112,28 @@ Inspect only the pages of a file. `--depth` is passed to Figma, so the server tr
 ```sh
 figma file get AbCdEf123 --depth 1
 figma file get AbCdEf123 --depth 2 --json | jq '.document.children[].name'
+```
+
+Fetch only the subtrees you need instead of the whole file. Ids Figma cannot find come back as `null` in the JSON and as a `not found` line in the text output; the command still exits 0:
+
+```console
+$ figma node get AbCdEf123 --nodes 1:2,9:9 --depth 1
+Spec (last modified 2026-01-01T00:00:00Z)
+FRAME Card (1:2)
+  TEXT Title (1:3)
+Node 9:9: not found
+```
+
+`--geometry paths` adds vector path data to each node. With `--json`, the response is Figma's unchanged, keyed by node id under `nodes`.
+
+List the design variables in a file, one collection per block with each variable's resolved type and its value in every mode (colors as hex, aliases as `-> <name>`). `--published` lists the variables this file publishes to its library instead; Figma returns no per-mode values for those:
+
+```console
+$ figma variable list AbCdEf123
+Colors (VariableCollectionId:1:1) [modes: Light, Dark]
+  brand/primary  COLOR  Light=#FF0000  Dark=#00000080
+  text/default  COLOR  Light=-> brand/primary  Dark=-> brand/primary
+  radius  FLOAT  Light=4  Dark=8
 ```
 
 Render two frames to PNG and print where they were written. Files are named `<file_key>_<node_id>.<format>` with `:` and other unsafe characters replaced by `-`; re-exporting the same node overwrites its file:
@@ -183,7 +210,7 @@ pytest tests/
 
 The tests are hermetic: no network access and no Figma token are needed, and `HOME` points at a temporary directory so a stored token never leaks in. The redirect tests use real sockets on `127.0.0.1`.
 
-`tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` is set. With the token alone it checks `auth check` and runs `auth login` from stdin into a temporary `HOME`; the file, comment and export checks also need `FIGMA_TEST_FILE_KEY` (add `FIGMA_TEST_NODE_ID` to exercise export). The comment check posts one comment and deletes it. CI runs it in the `live` job from the `FIGMA_TOKEN` secret and the `FIGMA_TEST_FILE_KEY` / `FIGMA_TEST_NODE_ID` repository variables, and skips it when they are absent.
+`tests/test_live.py` runs against the real API only when `FIGMA_TOKEN` is set. With the token alone it checks `auth check` and runs `auth login` from stdin into a temporary `HOME`; the file, comment, export, node and variable checks also need `FIGMA_TEST_FILE_KEY` (add `FIGMA_TEST_NODE_ID` to exercise export and `node get`). The `node get` check also asserts the call takes under 2 seconds and returns less than `file get` does on the same file. The variable check passes on either outcome the plan allows: collections on an Enterprise token, or exit 3 `forbidden` elsewhere. The comment check posts one comment and deletes it. CI runs it in the `live` job from the `FIGMA_TOKEN` secret and the `FIGMA_TEST_FILE_KEY` / `FIGMA_TEST_NODE_ID` repository variables, and skips it when they are absent.
 
 ## Release
 
