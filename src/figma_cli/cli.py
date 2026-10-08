@@ -50,17 +50,20 @@ def _tree_lines(node: dict[str, Any], indent: int = 0) -> list[str]:
     return lines
 
 
+def _file_header(data: dict[str, Any]) -> str:
+    return f"{data.get('name', '')} (last modified {data.get('lastModified', '?')})"
+
+
 def _file_get(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
     data = client.get_file(args.file_key, args.depth)
-    header = f"{data.get('name', '')} (last modified {data.get('lastModified', '?')})"
     tree = _tree_lines(data["document"]) if data.get("document") else []
-    return data, "\n".join([header, *tree])
+    return data, "\n".join([_file_header(data), *tree])
 
 
 def _node_get(client: FigmaClient, args: argparse.Namespace) -> tuple[Any, str]:
     data = client.get_nodes(args.file_key, args.nodes, args.depth, args.geometry)
     nodes = data.get("nodes") or {}
-    lines = [f"{data.get('name', '')} (last modified {data.get('lastModified', '?')})"]
+    lines = [_file_header(data)]
     for node_id in args.nodes:
         document = (nodes.get(node_id) or {}).get("document")
         if document:
