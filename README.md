@@ -126,13 +126,13 @@ Node 9:9: not found
 
 `--geometry paths` adds vector path data to each node. With `--json`, the response is Figma's unchanged, keyed by node id under `nodes`.
 
-List the design variables in a file, one collection per block with each variable's resolved type and its value in every mode (colors as hex, aliases as `-> <name>`). `--published` lists the variables this file publishes to its library instead; Figma returns no per-mode values for those:
+List the design variables in a file, one collection per block with each variable's resolved type and its value in every mode (colors as hex, aliases as `-> <name>`, or `-> <id>` when the aliased variable is not in the response, such as one from a library). `--published` lists the variables this file publishes to its library instead; Figma returns no per-mode values for those:
 
 ```console
 $ figma variable list AbCdEf123
 Colors (VariableCollectionId:1:1) [modes: Light, Dark]
   brand/primary  COLOR  Light=#FF0000  Dark=#00000080
-  text/default  COLOR  Light=-> brand/primary  Dark=-> brand/primary
+  text/default  COLOR  Light=-> brand/primary  Dark=-> VariableID:9:9
   radius  FLOAT  Light=4  Dark=8
 ```
 
