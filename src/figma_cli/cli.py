@@ -161,7 +161,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--token",
-        help="token value, or '-' to read stdin (piped stdin is read without it)",
+        help=(
+            "token value, or '-' to read stdin; a literal value shows in ps and"
+            " shell history, so prefer piped stdin, which is read without this flag"
+        ),
     )
     p.add_argument(
         "--browser",

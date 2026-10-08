@@ -57,8 +57,9 @@ def candidate_token(args: argparse.Namespace) -> str:
     token = token.strip()
     if not token:
         raise TokenInputError("empty_token", "no token was provided")
-    if any(ch.isspace() or not ch.isprintable() for ch in token):
-        raise TokenInputError("invalid_token", "token contains whitespace")
+    if any(not "!" <= ch <= "~" for ch in token):
+        message = "token must be visible ASCII, without spaces or line breaks"
+        raise TokenInputError("invalid_token", message)
     return token
 
 
