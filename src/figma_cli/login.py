@@ -27,17 +27,20 @@ SETTINGS_URL = "https://www.figma.com/settings"
 APPS_URL = "https://www.figma.com/developers/apps"
 REDIRECT_URL = f"http://127.0.0.1:{oauth.DEFAULT_PORT}{oauth.CALLBACK_PATH}"
 SCOPES = oauth.SCOPES
-INSTRUCTIONS = f"""\
+SCOPE_LINES = "\n".join(f"       {scope}" for scope in SCOPES)
+APP_INSTRUCTIONS = f"""\
 For 1-click browser login, create an OAuth app at {APPS_URL}
 with redirect URL {REDIRECT_URL} and grant these scopes:
-{chr(10).join(f"       {scope}" for scope in SCOPES)}
-Then export FIGMA_CLIENT_ID and FIGMA_CLIENT_SECRET and rerun
-figma auth login.
-
-Or create a personal access token for figma-cli:
+{SCOPE_LINES}
+Enter its client id and secret below; once Figma accepts them they are saved
+to {{path}} (mode 0600). Or export FIGMA_CLIENT_ID and
+FIGMA_CLIENT_SECRET instead. Press Enter to skip and use a personal access token.
+"""
+INSTRUCTIONS = f"""\
+Create a personal access token for figma-cli:
   1. Open {SETTINGS_URL} and go to Security > Personal access tokens.
   2. Generate a new token with these scopes:
-{chr(10).join(f"       {scope}" for scope in SCOPES)}
+{SCOPE_LINES}
   3. Paste the token below (input is hidden).
 """
 
@@ -85,16 +88,38 @@ def save_token(token: str) -> Path:
     return path
 
 
+def prompt_app_config() -> tuple[str, str] | None:
+    """Ask for the user's OAuth app; None when either half is skipped."""
+    print(APP_INSTRUCTIONS.format(path=oauth.app_config_path()), file=sys.stderr)
+    print("OAuth client id: ", end="", file=sys.stderr, flush=True)
+    client_id = sys.stdin.readline().strip()
+    if not client_id:
+        return None
+    client_secret = getpass.getpass("OAuth client secret: ").strip()
+    if not client_secret:
+        return None
+    return client_id, client_secret
+
+
 def login(args: argparse.Namespace) -> tuple[dict, Path]:
     """Obtain and validate a credential, store it, and return (identity, path).
 
-    An interactive terminal with OAuth client credentials runs the browser flow;
-    everything else (--token, piped stdin, no client credentials) takes a PAT.
+    An interactive terminal with OAuth client credentials (flags, environment,
+    or app.json) runs the browser flow; without them it offers to save an OAuth
+    app first. Everything else (--token, piped stdin, a skipped offer) takes a PAT.
     """
     if args.token is None and sys.stdin.isatty():
         client = oauth.client_credentials(args.client_id, args.client_secret)
         if client:
             return oauth.login(client, args.port, args.browser is not False)
+        prompted = prompt_app_config()
+        if prompted:
+            result = oauth.login(prompted, args.port, args.browser is not False)
+            try:
+                oauth.save_app_config(*prompted)
+            except FigmaError as err:
+                print(f"warning: could not save OAuth app: {err}", file=sys.stderr)
+            return result
     token = candidate_token(args)
     me = checked_me(FigmaClient(token, api_base()))
     return me, save_token(token)
