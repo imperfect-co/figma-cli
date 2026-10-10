@@ -26,6 +26,8 @@ jobs:
         run: ruff check .
       - name: Format
         run: ruff format --check .
+      - name: Type check
+        run: ty check src
       - name: Test
         run: pytest tests/
 

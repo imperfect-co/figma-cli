@@ -207,8 +207,11 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 ruff check .
 ruff format --check .
+ty check src
 pytest tests/
 ```
+
+`ty check src` type-checks the package against Python 3.11, the support floor, as set in `[tool.ty.environment]`. The dev extra pins `ty` to an exact version because its diagnostics still change between pre-1.0 releases; bump the pin deliberately.
 
 The tests are hermetic: no network access and no Figma token are needed, and `HOME` points at a temporary directory so a stored token never leaks in. The redirect tests use real sockets on `127.0.0.1`.
 
